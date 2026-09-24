@@ -1,0 +1,8 @@
+# Local working notes stay out of this repository
+claudedocs/
+
+# .NET build output
+bin/
+obj/
+*.user
+.vs/
