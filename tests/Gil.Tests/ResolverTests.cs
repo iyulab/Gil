@@ -166,6 +166,43 @@ public sealed class ResolverTests
         rig.Memory.Remembered.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task A_wrong_habit_blames_only_the_first_wrong_judgment_and_visits_are_counted_per_task()
+    {
+        var rig = new Rig(Judgments(("work", 0.95), ("pto", 0.95)));
+
+        await rig.Resolver.ResolveAsync(Task(), "I need Friday off", "t", TestContext.Current.CancellationToken);
+        await rig.Resolver.FeedbackAsync(Task(), "t", correct: false, correction: "book_flight", TestContext.Current.CancellationToken);
+
+        rig.Statistics.Paths.Should().ContainSingle().Which.Scope.Should().Be("support");
+        rig.Statistics.Outcomes.Should().Equal(("support", "work", new HabitCounts(Penalized: 1)));
+    }
+
+    [Fact]
+    public async Task A_correct_fallback_that_an_existing_habit_already_gives_marks_the_habit_missed()
+    {
+        var rig = new Rig(Judgments(("work", 0.95), ("pto", 0.6)), "pto_request");
+
+        await rig.Resolver.ResolveAsync(Task(FallbackScope.Path), "day off?", "t", TestContext.Current.CancellationToken);
+        await rig.Resolver.FeedbackAsync(Task(FallbackScope.Path), "t", correct: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        rig.Statistics.Outcomes.Should().Equal(("support", "pto", new HabitCounts(Missed: 1)));
+    }
+
+    [Fact]
+    public async Task A_memory_hit_leaves_the_habit_statistics_untouched()
+    {
+        var rig = new Rig(Judgments());
+        rig.Memory.Items.Add(("old", "book_flight", 0.93));
+        var task = Task(memoryThreshold: 0.9);
+
+        await rig.Resolver.ResolveAsync(task, "fly me", "t", TestContext.Current.CancellationToken);
+        await rig.Resolver.FeedbackAsync(task, "t", correct: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        rig.Statistics.Paths.Should().BeEmpty();
+        rig.Statistics.Outcomes.Should().BeEmpty();
+    }
+
     private static TaskDefinition Task(FallbackScope scope = FallbackScope.Full, bool allowFallback = true, double? memoryThreshold = null) =>
         new("support", new TreeAnswerContract(Tree), Tree, new TaskPolicy { FallbackScope = scope, AllowFallback = allowFallback, MemoryThreshold = memoryThreshold });
 
@@ -182,8 +219,11 @@ public sealed class ResolverTests
                 new FallbackGenerator(recorder, maxAttempts: 1),
                 new SlotFiller(recorder),
                 Sink,
-                Memory);
+                Memory,
+                Statistics);
         }
+
+        public RecordingStatistics Statistics { get; } = new();
 
         public ListSink Sink { get; } = new();
 

@@ -22,6 +22,24 @@ internal sealed class ListSink : ITelemetrySink
 
     public TraceSummary? FindTrace(string traceId) =>
         Traces.TryGetValue(traceId, out var t) && t.Outcome is not null
-            ? new TraceSummary(t.Task, t.State, t.Outcome.Mode, t.Outcome.Output, t.Outcome.Recall)
+            ? new TraceSummary(t.Task, t.State, t.Outcome.Mode, t.Outcome.Output, t.Outcome.Recall) { Path = t.Outcome.Path }
             : null;
+}
+
+/// <summary>Records what the resolver writes to the habit statistics, in order.</summary>
+internal sealed class RecordingStatistics : IHabitStatistics
+{
+    public List<(string Scope, IReadOnlyList<PathStep> Path)> Paths { get; } = [];
+
+    public List<(string Scope, string Item, HabitCounts Delta)> Outcomes { get; } = [];
+
+    public void RecordPath(string scope, IReadOnlyList<PathStep> path) => Paths.Add((scope, path));
+
+    public void RecordOutcome(string scope, string itemId, HabitCounts delta) => Outcomes.Add((scope, itemId, delta));
+
+    public NodeVisits Visits(string scope, string nodeId) => throw new NotSupportedException();
+
+    public IReadOnlyDictionary<string, int> Choices(string scope, string nodeId) => throw new NotSupportedException();
+
+    public HabitCounts Reliability(string scope, string itemId) => throw new NotSupportedException();
 }

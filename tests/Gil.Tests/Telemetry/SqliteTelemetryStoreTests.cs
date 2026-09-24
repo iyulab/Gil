@@ -81,7 +81,7 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
         store.RecordFeedback("t1", "wrong", "정정된 답");
 
         store.FindTrace("open").Should().BeNull();
-        store.FindTrace("t1").Should().Be(new TraceSummary("task", "입력 문장", "partial", "배송 조회 안내", new Recall("t0", 0.71, 0.9, Hit: false)));
+        store.FindTrace("t1").Should().BeEquivalentTo(new TraceSummary("task", "입력 문장", "partial", "배송 조회 안내", new Recall("t0", 0.71, 0.9, Hit: false)) { Path = CompatibilityFixture.Outcome.Path });
     }
 
     [Fact]
@@ -98,6 +98,38 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_path_counts_visits_choices_and_treats_a_deferral_as_an_exit()
+    {
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "t.sqlite"), clock: new FixedClock());
+        store.RecordPath("task", [Step("root", "bank", "accept"), Step("bank", "o-balance", "accept")]);
+        store.RecordPath("task", [Step("root", "bank", "accept"), Step("bank", "shadow-1", "defer")]);
+        store.RecordPath("task", [Step("root", null, "exit")]);
+        store.RecordPath("task", [Step("root", "work", "accept"), Step("work", null, "skip")]);
+
+        store.Visits("task", "root").Should().Be(new NodeVisits(4, 3, 1, new DateTimeOffset(2026, 1, 2, 3, 4, 5, 123, 456, TimeSpan.Zero)));
+        store.Visits("task", "bank").Should().BeEquivalentTo(new { Hits = 2, Accepts = 1, Exits = 1 });
+        store.Visits("task", "work").Should().BeEquivalentTo(new { Hits = 1, Accepts = 0, Exits = 0 }); // a skip is a hit only
+        store.Choices("task", "root").Should().BeEquivalentTo(new Dictionary<string, int> { ["bank"] = 2, ["work"] = 1 });
+        store.Choices("task", "bank").Should().BeEquivalentTo(new Dictionary<string, int> { ["o-balance"] = 1 }); // not the shadow
+        store.Visits("other", "root").Should().Be(new NodeVisits(0, 0, 0, null));
+    }
+
+    [Fact]
+    public void Outcomes_accumulate_raw_counts_per_scope_and_weights_are_applied_on_read()
+    {
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "t.sqlite"));
+        store.RecordOutcome("task", "o-balance", new HabitCounts(Reinforced: 1));
+        store.RecordOutcome("task", "o-balance", new HabitCounts(Reinforced: 1, Penalized: 1));
+        store.RecordOutcome("task", "o-balance", new HabitCounts(Missed: 1, Explored: 1, Disputed: 1));
+        store.RecordOutcome("other", "o-balance", new HabitCounts(Penalized: 5));
+
+        var counts = store.Reliability("task", "o-balance");
+        counts.Should().Be(new HabitCounts(2, 1, 1, 1, 1));
+        counts.Score(new ReliabilityWeights(Reinforce: 1, Penalty: 3, PriorStrength: 2)).Should().BeApproximately((1 + 2.0) / (2 + 2 + 3), 1e-12);
+        store.Reliability("task", "unknown").Score(new ReliabilityWeights(1, 3, 0)).Should().Be(0.5);
+    }
+
+    [Fact]
     public void Writes_the_compatibility_fixture()
     {
         // Other implementations read this file to check they understand the layout. Set GIL_COMPAT_FIXTURE to
@@ -108,7 +140,11 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
         using var read = Open(target);
         Row(read, "SELECT COUNT(*) AS n FROM traces")["n"].Should().Be(1L);
         Row(read, "SELECT COUNT(*) AS n FROM calls")["n"].Should().Be(1L);
+        Row(read, "SELECT COUNT(*) AS n FROM habit_reliability")["n"].Should().Be(2L);
     }
+
+    private static PathStep Step(string node, string? chosen, string outcome) =>
+        new(node, 1, chosen, 0.9, outcome, new Dictionary<string, double>(), 0);
 
     private static SqliteConnection Open(string path)
     {

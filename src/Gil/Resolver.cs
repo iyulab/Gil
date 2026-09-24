@@ -1,4 +1,5 @@
 using Gil.Fallback;
+using Gil.Habits;
 using Gil.Traverse;
 
 namespace Gil;
@@ -13,7 +14,8 @@ public sealed class Resolver(
     FallbackGenerator fallback,
     SlotFiller slots,
     ITelemetrySink? sink = null,
-    IMemory? memory = null)
+    IMemory? memory = null,
+    IHabitStatistics? statistics = null)
 {
     public async Task<Resolution> ResolveAsync(TaskDefinition task, string state, string? traceId = null, CancellationToken cancellationToken = default)
     {
@@ -33,7 +35,7 @@ public sealed class Resolver(
                 recall = new Recall(match.Source, match.Similarity, threshold, match.Similarity >= threshold);
                 if (recall.Hit)
                 {
-                    return Close(new Resolution(match.Answer, "memory", [], null, energy, traceId, recall));
+                    return Close(task, new Resolution(match.Answer, "memory", [], null, energy, traceId, recall));
                 }
             }
         }
@@ -62,12 +64,13 @@ public sealed class Resolver(
             energy += cost;
         }
 
-        return Close(new Resolution(output, mode, traversed.Path, confidence, energy, traceId, recall));
+        return Close(task, new Resolution(output, mode, traversed.Path, confidence, energy, traceId, recall));
     }
 
     /// <summary>
-    /// Records a verdict. Memory keeps only confirmed answers: a correct output, or the correction of a wrong one.
-    /// A remembered answer that turned out wrong is forgotten.
+    /// Records a verdict. A request that went through the tree credits or blames the judgments on its path (see
+    /// <see cref="HabitAttribution"/>). Memory keeps only confirmed answers: a correct output, or the correction of a
+    /// wrong one. A remembered answer that turned out wrong is forgotten.
     /// </summary>
     public async Task FeedbackAsync(TaskDefinition task, string traceId, bool correct, string? correction = null, CancellationToken cancellationToken = default)
     {
@@ -78,7 +81,31 @@ public sealed class Resolver(
         }
 
         sink.RecordFeedback(traceId, correct ? "correct" : "wrong", correction);
-        if (memory is null || task.Policy.MemoryThreshold is null || sink.FindTrace(traceId) is not TraceSummary trace)
+        if (sink.FindTrace(traceId) is not TraceSummary trace)
+        {
+            return;
+        }
+
+        if (statistics is not null && trace.Path.Count > 0 && trace.Mode is string mode)
+        {
+            var credit = HabitAttribution.Attribute(task.Ontology, trace.Path, mode, trace.Output, correct, correction);
+            foreach (var item in credit.Reinforce)
+            {
+                statistics.RecordOutcome(task.Name, item, new HabitCounts(Reinforced: 1));
+            }
+
+            if (credit.Penalize is not null)
+            {
+                statistics.RecordOutcome(task.Name, credit.Penalize, new HabitCounts(Penalized: 1));
+            }
+
+            if (credit.Missed is not null)
+            {
+                statistics.RecordOutcome(task.Name, credit.Missed, new HabitCounts(Missed: 1));
+            }
+        }
+
+        if (memory is null || task.Policy.MemoryThreshold is null)
         {
             return;
         }
@@ -136,8 +163,14 @@ public sealed class Resolver(
         return (full.Output, narrow.Energy + full.Energy);
     }
 
-    private Resolution Close(Resolution resolution)
+    private Resolution Close(TaskDefinition task, Resolution resolution)
     {
+        // Visits are counted per task: the same ids recur across tasks sharing a store.
+        if (resolution.Path.Count > 0)
+        {
+            statistics?.RecordPath(task.Name, resolution.Path);
+        }
+
         sink?.CloseTrace(resolution.TraceId, new TraceOutcome
         {
             Mode = resolution.Mode,

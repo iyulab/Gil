@@ -63,6 +63,10 @@ internal static class CompatibilityFixture
         store.OpenTrace("fixture-0001", "fixture", "택배가 아직 안 왔어요", label: "배송 조회 안내");
         store.RecordCall(Judgment);
         store.CloseTrace("fixture-0001", Outcome);
+        store.RecordPath("fixture", Outcome.Path);
+        store.RecordPath("fixture", [new PathStep("root", 1, "cat-결제", 0.9, "accept", new Dictionary<string, double>(), 0)]);
+        store.RecordOutcome("fixture", "cat-배송", new HabitCounts(Reinforced: 3, Penalized: 1));
+        store.RecordOutcome("fixture", "opt-1", new HabitCounts(Missed: 2, Explored: 1, Disputed: 1));
     }
 }
 

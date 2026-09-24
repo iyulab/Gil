@@ -21,4 +21,8 @@ public interface ITelemetrySink
 }
 
 /// <summary>What feedback needs to know about a recorded request.</summary>
-public sealed record TraceSummary(string Task, string State, string? Mode, string? Output, Recall? Recall);
+public sealed record TraceSummary(string Task, string State, string? Mode, string? Output, Recall? Recall)
+{
+    /// <summary>The traversal path; empty when the request never reached the tree.</summary>
+    public IReadOnlyList<PathStep> Path { get; init; } = [];
+}

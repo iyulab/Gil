@@ -10,7 +10,7 @@ namespace Gil.Telemetry;
 /// any language read these files directly, so columns may be added but never renamed or repurposed.
 /// Timestamps are UTC ISO-8601 strings; JSON columns keep non-ASCII text unescaped.
 /// </summary>
-public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
+public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IDisposable
 {
     internal const string Schema = """
         CREATE TABLE IF NOT EXISTS traces (
@@ -65,6 +65,35 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
             config     TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS node_stats (
+            scope        TEXT NOT NULL DEFAULT '',
+            node_id      TEXT NOT NULL,
+            hits         INTEGER NOT NULL DEFAULT 0,
+            accepts      INTEGER NOT NULL DEFAULT 0,
+            exits        INTEGER NOT NULL DEFAULT 0,
+            last_used_at TEXT,
+            PRIMARY KEY (scope, node_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS node_choices (
+            scope     TEXT NOT NULL DEFAULT '',
+            node_id   TEXT NOT NULL,
+            chosen_id TEXT NOT NULL,
+            accepts   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (scope, node_id, chosen_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS habit_reliability (
+            scope      TEXT NOT NULL DEFAULT '',
+            item_id    TEXT NOT NULL,
+            reinforced INTEGER NOT NULL DEFAULT 0,
+            penalized  INTEGER NOT NULL DEFAULT 0,
+            missed     INTEGER NOT NULL DEFAULT 0,
+            explored   INTEGER NOT NULL DEFAULT 0,
+            disputed   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (scope, item_id)
+        );
+
         CREATE TABLE IF NOT EXISTS store_meta (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -79,6 +108,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
 
     private readonly SqliteConnection _connection;
     private readonly TimeProvider _clock;
+    private SqliteTransaction? _transaction;
 
     /// <param name="path">The database file; created with the schema if it does not exist.</param>
     /// <param name="restricted">
@@ -163,7 +193,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
 
     public TraceSummary? FindTrace(string traceId)
     {
-        using var command = Command("SELECT task, state, mode, output, recall FROM traces WHERE trace_id = $id", [("$id", traceId)]);
+        using var command = Command("SELECT task, state, mode, output, recall, path FROM traces WHERE trace_id = $id", [("$id", traceId)]);
         using var reader = command.ExecuteReader();
         if (!reader.Read() || reader.IsDBNull(2))
         {
@@ -171,7 +201,92 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
         }
 
         var recall = reader.IsDBNull(4) ? null : JsonSerializer.Deserialize<Recall>(reader.GetString(4), Json);
-        return new TraceSummary(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), recall);
+        var path = reader.IsDBNull(5) ? null : JsonSerializer.Deserialize<List<PathStep>>(reader.GetString(5), Json);
+        return new TraceSummary(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), recall)
+        {
+            Path = path ?? [],
+        };
+    }
+
+    public void RecordPath(string scope, IReadOnlyList<PathStep> path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        var at = Now();
+        InTransaction(() =>
+        {
+            foreach (var step in path)
+            {
+                var accept = step.Outcome == "accept";
+                var exit = step.Outcome is "exit" or "defer";
+                Execute(
+                    "INSERT INTO node_stats (scope, node_id, hits, accepts, exits, last_used_at) VALUES ($scope, $node, 1, $accept, $exit, $at) "
+                        + "ON CONFLICT (scope, node_id) DO UPDATE SET hits = hits + 1, accepts = accepts + excluded.accepts, "
+                        + "exits = exits + excluded.exits, last_used_at = excluded.last_used_at",
+                    ("$scope", scope), ("$node", step.Node), ("$accept", accept ? 1 : 0), ("$exit", exit ? 1 : 0), ("$at", at));
+                if (accept && step.Chosen is not null)
+                {
+                    Execute(
+                        "INSERT INTO node_choices (scope, node_id, chosen_id, accepts) VALUES ($scope, $node, $chosen, 1) "
+                            + "ON CONFLICT (scope, node_id, chosen_id) DO UPDATE SET accepts = accepts + 1",
+                        ("$scope", scope), ("$node", step.Node), ("$chosen", step.Chosen));
+                }
+            }
+        });
+    }
+
+    public void RecordOutcome(string scope, string itemId, HabitCounts delta)
+    {
+        ArgumentNullException.ThrowIfNull(delta);
+        Execute(
+            "INSERT INTO habit_reliability (scope, item_id, reinforced, penalized, missed, explored, disputed) "
+                + "VALUES ($scope, $item, $r, $p, $m, $e, $d) ON CONFLICT (scope, item_id) DO UPDATE SET "
+                + "reinforced = reinforced + excluded.reinforced, penalized = penalized + excluded.penalized, "
+                + "missed = missed + excluded.missed, explored = explored + excluded.explored, disputed = disputed + excluded.disputed",
+            ("$scope", scope), ("$item", itemId), ("$r", delta.Reinforced), ("$p", delta.Penalized), ("$m", delta.Missed),
+            ("$e", delta.Explored), ("$d", delta.Disputed));
+    }
+
+    public NodeVisits Visits(string scope, string nodeId)
+    {
+        using var command = Command(
+            "SELECT hits, accepts, exits, last_used_at FROM node_stats WHERE scope = $scope AND node_id = $node",
+            [("$scope", scope), ("$node", nodeId)]);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return new NodeVisits(0, 0, 0, null);
+        }
+
+        DateTimeOffset? lastUsed = reader.IsDBNull(3)
+            ? null
+            : DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+        return new NodeVisits(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), lastUsed);
+    }
+
+    public IReadOnlyDictionary<string, int> Choices(string scope, string nodeId)
+    {
+        using var command = Command(
+            "SELECT chosen_id, accepts FROM node_choices WHERE scope = $scope AND node_id = $node",
+            [("$scope", scope), ("$node", nodeId)]);
+        using var reader = command.ExecuteReader();
+        var choices = new Dictionary<string, int>();
+        while (reader.Read())
+        {
+            choices[reader.GetString(0)] = reader.GetInt32(1);
+        }
+
+        return choices;
+    }
+
+    public HabitCounts Reliability(string scope, string itemId)
+    {
+        using var command = Command(
+            "SELECT reinforced, penalized, missed, explored, disputed FROM habit_reliability WHERE scope = $scope AND item_id = $item",
+            [("$scope", scope), ("$item", itemId)]);
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? new HabitCounts(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetInt32(4))
+            : new HabitCounts();
     }
 
     /// <summary>The task's requests that received feedback, oldest first — what a memory index is rebuilt from.</summary>
@@ -209,6 +324,21 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
 
     private string Now() => Format(_clock.GetUtcNow());
 
+    private void InTransaction(Action work)
+    {
+        using var transaction = _connection.BeginTransaction();
+        _transaction = transaction;
+        try
+        {
+            work();
+            transaction.Commit();
+        }
+        finally
+        {
+            _transaction = null;
+        }
+    }
+
     private void Execute(string sql, params (string Name, object? Value)[] parameters)
     {
         using var command = Command(sql, parameters);
@@ -225,6 +355,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
     {
         var command = _connection.CreateCommand();
         command.CommandText = sql;
+        command.Transaction = _transaction;
         foreach (var (name, value) in parameters)
         {
             command.Parameters.AddWithValue(name, value ?? DBNull.Value);
