@@ -167,6 +167,20 @@ public sealed class ResolverTests
     }
 
     [Fact]
+    public async Task Thresholds_belong_to_the_task_so_one_resolver_serves_tasks_that_accept_differently()
+    {
+        var rig = new Rig(Judgments(("work", 0.7), ("pto", 0.95), ("work", 0.7)), "pto_request");
+        var lenient = Task() with { Policy = Task().Policy with { Thresholds = new([0.5], Leaf: 0.9) } };
+        var strict = Task() with { Policy = Task().Policy with { Thresholds = new([0.9], Leaf: 0.9) } };
+
+        var first = await rig.Resolver.ResolveAsync(lenient, "I need Friday off", "t1", TestContext.Current.CancellationToken);
+        var second = await rig.Resolver.ResolveAsync(strict, "I need Friday off", "t2", TestContext.Current.CancellationToken);
+
+        (first.Mode, second.Mode).Should().Be(("habit/answer", "fallback"));
+        second.Output.Should().Be("pto_request");
+    }
+
+    [Fact]
     public async Task A_wrong_habit_blames_only_the_first_wrong_judgment_and_visits_are_counted_per_task()
     {
         var rig = new Rig(Judgments(("work", 0.95), ("pto", 0.95)));
@@ -204,7 +218,7 @@ public sealed class ResolverTests
     }
 
     private static TaskDefinition Task(FallbackScope scope = FallbackScope.Full, bool allowFallback = true, double? memoryThreshold = null) =>
-        new("support", new TreeAnswerContract(Tree), Tree, new TaskPolicy { FallbackScope = scope, AllowFallback = allowFallback, MemoryThreshold = memoryThreshold });
+        new("support", new TreeAnswerContract(Tree), Tree, new TaskPolicy { Thresholds = Strict, FallbackScope = scope, AllowFallback = allowFallback, MemoryThreshold = memoryThreshold });
 
     private static (string? Choice, double Confidence)[] Judgments(params (string? Choice, double Confidence)[] script) => script;
 
@@ -215,7 +229,7 @@ public sealed class ResolverTests
             Model = new ScriptedModel(answers);
             var recorder = new CallRecorder(Model, new EnergyModel(1, 0, 0, 0), Sink);
             Resolver = new Resolver(
-                new GreedyTraverser(new ScriptedJudge(judgments), Strict),
+                new GreedyTraverser(new ScriptedJudge(judgments)),
                 new FallbackGenerator(recorder, maxAttempts: 1),
                 new SlotFiller(recorder),
                 Sink,

@@ -41,7 +41,7 @@ public sealed class Resolver(
         }
 
         // 2. The tree.
-        var traversed = await traverser.TraverseAsync(state, task.Ontology, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var traversed = await traverser.TraverseAsync(state, task.Ontology, task.Policy.Thresholds, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
         energy += traversed.Energy;
         var confidence = traversed.Path.Count > 0 ? traversed.Path[^1].P : 0;
         string? output;

@@ -47,12 +47,16 @@ public sealed class ResolverReplayTests : IDisposable
     private async Task ReplayAsync(JsonElement fixture, SqliteTelemetryStore store)
     {
         var name = fixture.GetProperty("task").GetString()!;
+        var thresholds = new Thresholds([.. fixture.GetProperty("per_layer").EnumerateArray().Select(v => v.GetDouble())], fixture.GetProperty("leaf").GetDouble());
         var task = new TaskDefinition(
             name,
             new TreeAnswerContract(OntologyYaml.Parse(fixture.GetProperty("contract_tree").GetString()!).Root),
             OntologyYaml.Parse(fixture.GetProperty("tree").GetString()!).Root,
-            new TaskPolicy { FallbackScope = fixture.GetProperty("fallback_scope").GetString() == "path" ? FallbackScope.Path : FallbackScope.Full });
-        var thresholds = new Thresholds([.. fixture.GetProperty("per_layer").EnumerateArray().Select(v => v.GetDouble())], fixture.GetProperty("leaf").GetDouble());
+            new TaskPolicy
+            {
+                Thresholds = thresholds,
+                FallbackScope = fixture.GetProperty("fallback_scope").GetString() == "path" ? FallbackScope.Path : FallbackScope.Full,
+            });
         var attempts = fixture.GetProperty("fallback_max_attempts").GetInt32();
 
         var replayed = 0;
@@ -62,7 +66,7 @@ public sealed class ResolverReplayTests : IDisposable
             var model = new RecordedChatModel([.. @case.GetProperty("fallback_outputs").EnumerateArray().Select(o => o.GetString()!)]);
             var recorder = new CallRecorder(model, new EnergyModel(1, 0, 0, 0), store);
             var resolver = new Resolver(
-                new GreedyTraverser(new RecordedJudge(@case.GetProperty("judgments")), thresholds),
+                new GreedyTraverser(new RecordedJudge(@case.GetProperty("judgments"))),
                 new FallbackGenerator(recorder, attempts),
                 new SlotFiller(recorder),
                 store,

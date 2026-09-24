@@ -37,7 +37,7 @@ public sealed class ResolverLiveTests
         using var store = new SqliteTelemetryStore(Path.Combine(directory, "live.sqlite"));
         var recorder = new CallRecorder(model, new EnergyModel(0, 1, 0.1, 4), store);
         var resolver = new Resolver(
-            new GreedyTraverser(new SingleTokenJudge(recorder, new SingleTokenJudgeOptions { OrderSeed = 1, ExtraBody = extra }), new Thresholds([0.8], 0.7)),
+            new GreedyTraverser(new SingleTokenJudge(recorder, new SingleTokenJudgeOptions { OrderSeed = 1, ExtraBody = extra })),
             new FallbackGenerator(recorder, extraBody: extra),
             new SlotFiller(recorder),
             store);
@@ -56,7 +56,7 @@ public sealed class ResolverLiveTests
                 options:
                   - {id: query, kind: answer, label: weather query, description: will it rain tomorrow, text: weather_query}
             """).Root;
-        var task = new TaskDefinition("live", new TreeAnswerContract(tree), tree, new TaskPolicy { FallbackScope = FallbackScope.Path });
+        var task = new TaskDefinition("live", new TreeAnswerContract(tree), tree, new TaskPolicy { Thresholds = new([0.8], 0.7), FallbackScope = FallbackScope.Path });
 
         var alarm = await resolver.ResolveAsync(task, "please wake me up at 6 tomorrow", cancellationToken: TestContext.Current.CancellationToken);
         var weather = await resolver.ResolveAsync(task, "is it going to rain this afternoon?", cancellationToken: TestContext.Current.CancellationToken);

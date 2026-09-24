@@ -91,12 +91,12 @@ public sealed class EmbeddingMemoryTests
         {
             var path = Path.Combine(directory, "m.sqlite");
             var tree = OntologyYaml.Parse("id: root\noptions: [{id: refund, kind: answer, label: refund, description: refunds, text: refund_policy}]").Root;
-            var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new TaskPolicy { MemoryThreshold = 0.9 });
+            var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new TaskPolicy { Thresholds = new([0.5], 0.5), MemoryThreshold = 0.9 });
             using (var store = new SqliteTelemetryStore(path))
             {
                 var memory = new EmbeddingMemory(new EmbeddingRecorder(new Vectors(Refund, RefundNear), new EnergyModel(1, 0, 0, 0), store));
                 var resolver = new Resolver(
-                    new GreedyTraverser(new AlwaysAccept(), new Thresholds([0.5], 0.5)),
+                    new GreedyTraverser(new AlwaysAccept()),
                     new FallbackGenerator(new CallRecorder(new NoModel(), new EnergyModel(0, 0, 0, 0))),
                     new SlotFiller(new CallRecorder(new NoModel(), new EnergyModel(0, 0, 0, 0))),
                     store,

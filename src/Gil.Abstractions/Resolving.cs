@@ -10,9 +10,37 @@ public enum FallbackScope
     Path,
 }
 
+/// <summary>
+/// Acceptance thresholds. Inner layers ask "is the input in this category"; the leaf asks "is this habit a fitting
+/// answer" — different questions, so they get separate thresholds.
+/// </summary>
+/// <param name="PerLayer">Per inner layer, from the root; deeper layers reuse the last value.</param>
+/// <param name="Leaf">For choosing a habit.</param>
+public sealed record Thresholds(IReadOnlyList<double> PerLayer, double Leaf)
+{
+    public double For(int layer, bool isLeaf)
+    {
+        if (isLeaf)
+        {
+            return Leaf;
+        }
+
+        ArgumentNullException.ThrowIfNull(PerLayer);
+        return PerLayer[Math.Min(layer - 1, PerLayer.Count - 1)];
+    }
+}
+
 /// <summary>How a task resolves requests.</summary>
 public sealed record TaskPolicy
 {
+    /// <summary>
+    /// When the tree accepts a judgment. There is no default, for two reasons. A judgment's probability is not a
+    /// calibrated accuracy — its scale depends on the judging model. And the right threshold depends on the task: a
+    /// layer should accept whenever the answer it leads to is expected to beat what exiting leads to, so a task whose
+    /// full fallback is weak should accept far lower than one whose full fallback is strong.
+    /// </summary>
+    public required Thresholds Thresholds { get; init; }
+
     /// <summary>When false, requests the tree cannot settle are handed to a person (abstain) instead of generated.</summary>
     public bool AllowFallback { get; init; } = true;
 
