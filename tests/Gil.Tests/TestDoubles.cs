@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Gil.Tests;
 
 /// <summary>An in-memory telemetry sink for tests.</summary>
@@ -42,4 +44,67 @@ internal sealed class RecordingStatistics : IHabitStatistics
     public IReadOnlyDictionary<string, int> Choices(string scope, string nodeId) => throw new NotSupportedException();
 
     public HabitCounts Reliability(string scope, string itemId) => throw new NotSupportedException();
+}
+
+/// <summary>
+/// Replays judgments another implementation recorded, per node: <c>{node: {probs, confidence, trusted, choice}}</c>.
+/// An untrusted judgment has no choice, whatever was recorded.
+/// </summary>
+internal sealed class RecordedJudge(JsonElement byNode) : IJudge
+{
+    public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
+    {
+        var r = byNode.GetProperty(nodeId!);
+        var probs = r.GetProperty("probs").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetDouble());
+        var trusted = r.GetProperty("trusted").GetBoolean();
+        return Task.FromResult(new Judgment
+        {
+            Probs = probs,
+            Choice = trusted ? r.GetProperty("choice").GetString() : null,
+            Confidence = r.GetProperty("confidence").GetDouble(),
+            NoneProb = 1 - probs.Values.Sum(),
+            LabelMass = 0.99,
+            Trusted = trusted,
+            Call = new CallRecord
+            {
+                CallId = Guid.NewGuid().ToString("N"),
+                TraceId = traceId,
+                CreatedAt = DateTimeOffset.UnixEpoch,
+                Role = "judge",
+                Model = "replay",
+                NodeId = nodeId,
+                Layer = layer,
+                PromptTokens = 0,
+                CachedTokens = 0,
+                CompletionTokens = 0,
+                LatencyMs = 0,
+                Energy = 1,
+            },
+        });
+    }
+}
+
+/// <summary>Returns the given outputs in order and fails if asked for more — a replay must use exactly what was recorded.</summary>
+internal sealed class RecordedChatModel(IReadOnlyList<string> outputs) : IChatModel
+{
+    public int Used { get; private set; }
+
+    public Task<ChatResult> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default)
+    {
+        if (Used >= outputs.Count)
+        {
+            throw new InvalidOperationException($"asked for output {Used + 1} of {outputs.Count} recorded");
+        }
+
+        return Task.FromResult(new ChatResult
+        {
+            Model = "replay",
+            Content = outputs[Used++],
+            PromptTokens = 1,
+            CachedTokens = 0,
+            CompletionTokens = 1,
+            LatencyMs = 1,
+            RawResponse = "{}",
+        });
+    }
 }

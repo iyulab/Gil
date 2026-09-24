@@ -108,7 +108,7 @@ public sealed class GreedyTraverserTests
         var compared = 0;
         foreach (var @case in document.RootElement.GetProperty("cases").EnumerateArray())
         {
-            var judge = new Recorded(@case.GetProperty("judgments"));
+            var judge = new RecordedJudge(@case.GetProperty("judgments"));
             foreach (var expected in @case.GetProperty("expected").EnumerateArray())
             {
                 var thresholds = new Thresholds([.. expected.GetProperty("per_layer").EnumerateArray().Select(v => v.GetDouble())], expected.GetProperty("leaf").GetDouble());
@@ -140,16 +140,6 @@ public sealed class GreedyTraverserTests
             Shown.Add(candidates);
             var (choice, confidence) = script[_next++];
             return Task.FromResult(Make(choice, confidence, Trusted, choice is null ? [] : new Dictionary<string, double> { [choice] = confidence }));
-        }
-    }
-
-    private sealed class Recorded(JsonElement byNode) : IJudge
-    {
-        public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
-        {
-            var r = byNode.GetProperty(nodeId!);
-            var probs = r.GetProperty("probs").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetDouble());
-            return Task.FromResult(Make(r.GetProperty("choice").GetString(), r.GetProperty("confidence").GetDouble(), r.GetProperty("trusted").GetBoolean(), probs));
         }
     }
 
