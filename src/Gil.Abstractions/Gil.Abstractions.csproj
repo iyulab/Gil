@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Gil</RootNamespace>
+    <Description>Contracts for the Gil habit runtime: records, ports and the telemetry schema's row types.</Description>
+  </PropertyGroup>
+</Project>

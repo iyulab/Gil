@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Gil.Abstractions/Gil.Abstractions.csproj" />
+    <Project Path="src/Gil/Gil.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Gil.Tests/Gil.Tests.csproj" />
+  </Folder>
+</Solution>
