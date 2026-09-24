@@ -1,0 +1,152 @@
+using Gil.Fallback;
+using Gil.Traverse;
+
+namespace Gil;
+
+/// <summary>
+/// Resolves requests in the fixed order: memory, then the tree, then a fallback narrowed to what the tree confirmed,
+/// then the full fallback — or a hand-off to a person when the task does not allow generation. The output contract
+/// is the same whichever path answered; <see cref="Resolution.Mode"/> tells which one did.
+/// </summary>
+public sealed class Resolver(
+    GreedyTraverser traverser,
+    FallbackGenerator fallback,
+    SlotFiller slots,
+    ITelemetrySink? sink = null,
+    IMemory? memory = null)
+{
+    public async Task<Resolution> ResolveAsync(TaskDefinition task, string state, string? traceId = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        traceId ??= Guid.NewGuid().ToString("N");
+        sink?.OpenTrace(traceId, task.Name, state);
+
+        // 1. Memory. A hit never touches the tree, so it is not evidence for the tree's habits either.
+        Recall? recall = null;
+        var energy = 0.0;
+        if (memory is not null && task.Policy.MemoryThreshold is double threshold)
+        {
+            var (match, cost) = await memory.LookupAsync(task.Name, state, traceId, cancellationToken).ConfigureAwait(false);
+            energy += cost;
+            if (match is not null)
+            {
+                recall = new Recall(match.Source, match.Similarity, threshold, match.Similarity >= threshold);
+                if (recall.Hit)
+                {
+                    return Close(new Resolution(match.Answer, "memory", [], null, energy, traceId, recall));
+                }
+            }
+        }
+
+        // 2. The tree.
+        var traversed = await traverser.TraverseAsync(state, task.Ontology, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        energy += traversed.Energy;
+        var confidence = traversed.Path.Count > 0 ? traversed.Path[^1].P : 0;
+        string? output;
+        string mode;
+        if (traversed.Habit is Habit habit)
+        {
+            (output, mode, var cost) = await FromHabitAsync(habit, state, traceId, cancellationToken).ConfigureAwait(false);
+            energy += cost;
+        }
+        else if (!task.Policy.AllowFallback)
+        {
+            (output, mode) = (null, "abstain");
+        }
+        else
+        {
+            // 3–4. Fallback: narrowed when the tree confirmed a category, otherwise full.
+            var confirmed = traversed.Confirmed;
+            mode = confirmed.Count > 0 ? "partial" : "fallback";
+            (output, var cost) = await GenerateAsync(task, state, confirmed, traceId, cancellationToken).ConfigureAwait(false);
+            energy += cost;
+        }
+
+        return Close(new Resolution(output, mode, traversed.Path, confidence, energy, traceId, recall));
+    }
+
+    /// <summary>
+    /// Records a verdict. Memory keeps only confirmed answers: a correct output, or the correction of a wrong one.
+    /// A remembered answer that turned out wrong is forgotten.
+    /// </summary>
+    public async Task FeedbackAsync(TaskDefinition task, string traceId, bool correct, string? correction = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        if (sink is null)
+        {
+            return;
+        }
+
+        sink.RecordFeedback(traceId, correct ? "correct" : "wrong", correction);
+        if (memory is null || task.Policy.MemoryThreshold is null || sink.FindTrace(traceId) is not TraceSummary trace)
+        {
+            return;
+        }
+
+        if (!correct && trace.Mode == "memory" && trace.Recall is not null)
+        {
+            memory.Forget(task.Name, trace.Recall.Source);
+        }
+
+        var answer = correct ? trace.Output : correction;
+        if (!string.IsNullOrEmpty(answer))
+        {
+            await memory.RememberAsync(task.Name, traceId, trace.State, answer, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<(string? Output, string Mode, double Energy)> FromHabitAsync(Habit habit, string state, string traceId, CancellationToken cancellationToken)
+    {
+        switch (habit.Kind)
+        {
+            case HabitKind.Answer:
+                return (habit.Text, "habit/answer", 0);
+            case HabitKind.Template:
+                var filled = await slots.FillAsync(state, habit, traceId, cancellationToken).ConfigureAwait(false);
+                return (filled.Output, "habit/template", filled.Energy);
+            default:
+                // A procedure is handed to generation as instructions; there is no procedure executor.
+                var generated = await fallback.GenerateAsync($"{state}\n\n절차: {habit.Steps}", new TextContract(), traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+                return (generated.Output, "habit/procedure", generated.Energy);
+        }
+    }
+
+    private async Task<(string? Output, double Energy)> GenerateAsync(
+        TaskDefinition task, string state, IReadOnlyList<string> confirmed, string traceId, CancellationToken cancellationToken)
+    {
+        var labels = confirmed.Select(id => task.Ontology.Find(id)?.Label ?? id).ToList();
+        var scoped = task.Policy.FallbackScope == FallbackScope.Path && confirmed.Count > 0 && task.Contract is IScopableContract scopable
+            ? scopable.Scoped(confirmed[^1])
+            : null;
+        if (scoped is null)
+        {
+            var result = await fallback.GenerateAsync(state, task.Contract, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
+            return (result.Output, result.Energy);
+        }
+
+        var narrow = await fallback.GenerateAsync(state, scoped.Contract, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (narrow.Output is null || narrow.Output != scoped.Escape)
+        {
+            return (narrow.Output, narrow.Energy);
+        }
+
+        // The model says the answer is outside the confirmed category: the judgment above was wrong. Solve in full,
+        // without the (wrong) path as context.
+        var full = await fallback.GenerateAsync(state, task.Contract, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return (full.Output, narrow.Energy + full.Energy);
+    }
+
+    private Resolution Close(Resolution resolution)
+    {
+        sink?.CloseTrace(resolution.TraceId, new TraceOutcome
+        {
+            Mode = resolution.Mode,
+            Output = resolution.Output,
+            Confidence = resolution.Confidence,
+            Energy = resolution.Energy,
+            Path = resolution.Path,
+            Recall = resolution.Recall,
+        });
+        return resolution;
+    }
+}

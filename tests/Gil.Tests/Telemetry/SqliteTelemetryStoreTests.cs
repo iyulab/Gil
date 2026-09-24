@@ -71,6 +71,20 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Feedback_is_recorded_and_a_closed_request_is_found_with_its_recall()
+    {
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "f.sqlite"));
+        store.OpenTrace("open", "task", "not closed yet");
+        store.OpenTrace("t1", "task", "입력 문장");
+        store.CloseTrace("t1", CompatibilityFixture.Outcome);
+
+        store.RecordFeedback("t1", "wrong", "정정된 답");
+
+        store.FindTrace("open").Should().BeNull();
+        store.FindTrace("t1").Should().Be(new TraceSummary("task", "입력 문장", "partial", "배송 조회 안내", new Recall("t0", 0.71, 0.9, Hit: false)));
+    }
+
+    [Fact]
     public void The_restricted_mark_survives_reopening_without_it()
     {
         var path = Path.Combine(_directory, "x.sqlite");

@@ -189,21 +189,4 @@ public sealed class OpenAICompatibleChatModelTests
             return await script[_next++](request, cancellationToken);
         }
     }
-
-    private sealed class ListSink : ITelemetrySink
-    {
-        public List<CallRecord> Calls { get; } = [];
-
-        public void OpenTrace(string traceId, string task, string state, string? label = null)
-        {
-        }
-
-        public void CloseTrace(string traceId, TraceOutcome outcome)
-        {
-        }
-
-        public void RecordCall(CallRecord record) => Calls.Add(record);
-
-        public string RecordRunConfig(string task, string configJson) => configJson;
-    }
 }

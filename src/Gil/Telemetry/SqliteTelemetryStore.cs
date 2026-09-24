@@ -156,6 +156,24 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
         return (string)Scalar("SELECT config FROM run_configs WHERE task = $task", ("$task", task))!;
     }
 
+    public void RecordFeedback(string traceId, string verdict, string? correction) =>
+        Execute(
+            "UPDATE traces SET feedback_verdict = $verdict, feedback_correction = $correction WHERE trace_id = $id",
+            ("$verdict", verdict), ("$correction", correction), ("$id", traceId));
+
+    public TraceSummary? FindTrace(string traceId)
+    {
+        using var command = Command("SELECT task, state, mode, output, recall FROM traces WHERE trace_id = $id", [("$id", traceId)]);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.IsDBNull(2))
+        {
+            return null;
+        }
+
+        var recall = reader.IsDBNull(4) ? null : JsonSerializer.Deserialize<Recall>(reader.GetString(4), Json);
+        return new TraceSummary(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), recall);
+    }
+
     public void Dispose()
     {
         _connection.Dispose();
