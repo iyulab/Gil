@@ -11,8 +11,8 @@ research harness. Nothing is published yet.
 
 | Project | Contents |
 |---|---|
-| `Gil.Abstractions` | Records and ports: model calls, traversal steps, telemetry sink |
-| `Gil` | The runtime. Currently: the SQLite telemetry store |
+| `Gil.Abstractions` | Records and ports: the decision tree, model calls, traversal steps, telemetry sink |
+| `Gil` | The runtime. Currently: the SQLite telemetry store and the tree YAML reader/writer |
 | `Gil.Tests` | Unit tests and the compatibility fixture writer |
 
 The telemetry file layout is a contract: analysis tools read it directly, so columns may be added but never
