@@ -39,6 +39,8 @@ public sealed record OpenAICompatibleOptions
 /// A thin transport of its own because general-purpose client abstractions (including IronHive's) do not yet expose
 /// token log-probabilities or server timings. When they do, an adapter over that abstraction should replace this.
 /// </remarks>
+// TODO(upstream): replace with an adapter over IronHive once its abstractions expose token log-probabilities and
+// server timings; remove this transport then.
 public sealed class OpenAICompatibleChatModel : IChatModel
 {
     private readonly HttpClient _http;
