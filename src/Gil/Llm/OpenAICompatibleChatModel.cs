@@ -1,7 +1,3 @@
-using System.Diagnostics;
-using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -43,69 +39,27 @@ public sealed record OpenAICompatibleOptions
 // server timings; remove this transport then.
 public sealed class OpenAICompatibleChatModel : IChatModel
 {
-    private readonly HttpClient _http;
-    private readonly OpenAICompatibleOptions _options;
-    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly OpenAICompatibleHttp _http;
 
     public OpenAICompatibleChatModel(HttpClient http, OpenAICompatibleOptions options, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(options);
-        _http = http;
-        _options = options;
-        _delay = delay ?? Task.Delay;
+        _http = new OpenAICompatibleHttp(http, options, delay);
     }
 
     public async Task<ChatResult> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var body = Body(request);
-        var endpoint = new Uri(_options.BaseUrl, "v1/chat/completions");
-        var timeouts = 0;
-        for (var attempt = 1; ; attempt++)
-        {
-            var started = Stopwatch.GetTimestamp();
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(_options.Timeout);
-            try
-            {
-                using var message = new HttpRequestMessage(HttpMethod.Post, endpoint)
-                {
-                    Content = new StringContent(body, Encoding.UTF8, "application/json"),
-                };
-                message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
-                using var response = await _http.SendAsync(message, deadline.Token).ConfigureAwait(false);
-                var text = await response.Content.ReadAsStringAsync(deadline.Token).ConfigureAwait(false);
-                if (response.IsSuccessStatusCode)
-                {
-                    return Parse(text, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-                }
-
-                if (!IsTransient(response.StatusCode) || attempt >= _options.MaxAttempts)
-                {
-                    throw new HttpRequestException(
-                        $"chat completion failed: {(int)response.StatusCode} {response.ReasonPhrase}", null, response.StatusCode);
-                }
-            }
-            catch (HttpRequestException error) when (error.StatusCode is null && attempt < _options.MaxAttempts)
-            {
-                // No response at all: the request never reached the server's queue.
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeouts < _options.ReadTimeoutRetries)
-            {
-                // Our own deadline, not the caller's: the server may be working on it already.
-                timeouts++;
-            }
-
-            await _delay(_options.Backoff * Math.Pow(2, attempt - 1), cancellationToken).ConfigureAwait(false);
-        }
+        var (text, latencyMs) = await _http.PostAsync("v1/chat/completions", Body(request), cancellationToken).ConfigureAwait(false);
+        return Parse(text, latencyMs);
     }
 
     private string Body(ChatRequest request)
     {
         var body = new JsonObject
         {
-            ["model"] = _options.Model,
+            ["model"] = _http.Options.Model,
             ["messages"] = new JsonArray([.. request.Messages.Select(m => new JsonObject { ["role"] = m.Role, ["content"] = m.Content })]),
             ["max_tokens"] = request.MaxTokens,
             ["temperature"] = request.Temperature,
@@ -149,7 +103,7 @@ public sealed class OpenAICompatibleChatModel : IChatModel
 
         return new ChatResult
         {
-            Model = root.TryGetProperty("model", out var model) ? model.GetString() ?? _options.Model : _options.Model,
+            Model = root.TryGetProperty("model", out var model) ? model.GetString() ?? _http.Options.Model : _http.Options.Model,
             Content = choice.ValueKind == JsonValueKind.Object && choice.TryGetProperty("message", out var message)
                 && message.TryGetProperty("content", out var body) && body.ValueKind == JsonValueKind.String
                 ? body.GetString()!
@@ -167,9 +121,6 @@ public sealed class OpenAICompatibleChatModel : IChatModel
             RawResponse = text,
         };
     }
-
-    private static bool IsTransient(HttpStatusCode status) =>
-        status is HttpStatusCode.TooManyRequests || (int)status >= 500;
 
     private static int Int(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number

@@ -174,6 +174,30 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IDisposable
         return new TraceSummary(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), recall);
     }
 
+    /// <summary>The task's requests that received feedback, oldest first — what a memory index is rebuilt from.</summary>
+    public IReadOnlyList<Gil.Memory.FeedbackEntry> FeedbackHistory(string task)
+    {
+        using var command = Command(
+            "SELECT trace_id, state, mode, output, recall, feedback_verdict, feedback_correction FROM traces "
+                + "WHERE task = $task AND feedback_verdict IS NOT NULL ORDER BY created_at, rowid",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var entries = new List<Gil.Memory.FeedbackEntry>();
+        while (reader.Read())
+        {
+            entries.Add(new Gil.Memory.FeedbackEntry(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : JsonSerializer.Deserialize<Recall>(reader.GetString(4), Json),
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6)));
+        }
+
+        return entries;
+    }
+
     public void Dispose()
     {
         _connection.Dispose();

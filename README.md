@@ -12,7 +12,7 @@ research harness. Nothing is published yet.
 | Project | Contents |
 |---|---|
 | `Gil.Abstractions` | Records and ports: the decision tree, model calls, traversal steps, telemetry sink |
-| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, an OpenAI-compatible chat transport with calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling and the resolver (memory → tree → narrowed fallback → full fallback) |
+| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, an OpenAI-compatible chat transport with calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling, the resolver (memory → tree → narrowed fallback → full fallback) and embedding memory |
 | `Gil.Tests` | Unit tests and the compatibility fixture writer |
 
 The telemetry file layout is a contract: analysis tools read it directly, so columns may be added but never
