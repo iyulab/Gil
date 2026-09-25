@@ -105,6 +105,14 @@ File.WriteAllText("support.proposed.yaml", review.After);
 `Deactivation.Propose` and `Differentiation.Capacity` / `Differentiation.Anchored` produce the other two review
 lists: habits to retire, and nodes to split or categories to add.
 
+Costs are only as real as the coefficients. A self-hosted server reports how long each call took; once a few hundred
+calls are recorded, fit the coefficients to those times and price with them from then on (for an API, use its
+published prices instead):
+
+```csharp
+var fitted = EnergyModel.Fit(store.ServerTimeSamples("my-model"));
+```
+
 ## Build and test
 
 Requires the .NET 10 SDK.

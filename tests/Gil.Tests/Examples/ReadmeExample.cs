@@ -72,5 +72,7 @@ internal static class ReadmeExample
             JudgeCostModel.Fit(store.JudgeCostSamples(task.Name)));
         var review = Promotion.Review(tree, proposer.Propose(tree, store.PromotionCandidates(task.Name)));
         File.WriteAllText("support.proposed.yaml", review.After);
+
+        var fitted = EnergyModel.Fit(store.ServerTimeSamples("my-model"));
     }
 }

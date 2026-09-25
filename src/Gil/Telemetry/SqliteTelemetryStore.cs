@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Gil.Habits;
+using Gil.Llm;
 using Microsoft.Data.Sqlite;
 
 namespace Gil.Telemetry;
@@ -271,6 +272,28 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         }
 
         return energy;
+    }
+
+    /// <summary>
+    /// Chat calls whose server reported its processing time, with that time (prompt + generation, in ms) as the cost
+    /// — the samples <see cref="EnergyModel.Fit"/> turns into GPU-millisecond coefficients for that server. Pass the
+    /// model to keep one server's calls apart from another's. Embedding calls are left out: servers report no time for
+    /// them.
+    /// </summary>
+    public IReadOnlyList<CallCostSample> ServerTimeSamples(string? model = null)
+    {
+        using var command = Command(
+            "SELECT prompt_tokens, cached_tokens, completion_tokens, gpu_prompt_ms + COALESCE(gpu_predicted_ms, 0) FROM calls "
+            + "WHERE gpu_prompt_ms IS NOT NULL AND role != 'embed' AND ($model IS NULL OR model = $model)",
+            [("$model", model)]);
+        using var reader = command.ExecuteReader();
+        var samples = new List<CallCostSample>();
+        while (reader.Read())
+        {
+            samples.Add(new CallCostSample(reader.GetInt32(0), reader.IsDBNull(1) ? 0 : reader.GetInt32(1), reader.GetInt32(2), reader.GetDouble(3)));
+        }
+
+        return samples;
     }
 
     public IReadOnlyList<JudgeCostSample> JudgeCostSamples(string task)
