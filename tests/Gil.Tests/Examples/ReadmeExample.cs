@@ -37,7 +37,11 @@ internal static class ReadmeExample
             ApiKey = "",
             Model = "my-embedding-model",
         });
-        var memory = new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store));
+        // Memory is a cache in front of the tree: if it fails, requests go on as misses (the trace keeps the error), and
+        // the breaker stops a dead endpoint from adding its retries to every request.
+        var memory = new CircuitBreakingMemory(
+            new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store)),
+            cooldown: TimeSpan.FromSeconds(30));
 
         var resolver = new Resolver(
             new GreedyTraverser(new SingleTokenJudge(recorder)),
