@@ -11,7 +11,7 @@ namespace Gil.Telemetry;
 /// any language read these files directly, so columns may be added but never renamed or repurposed.
 /// Timestamps are UTC ISO-8601 strings; JSON columns keep non-ASCII text unescaped.
 /// </summary>
-public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IPromotionEvidenceSource, IDisposable
+public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IPromotionEvidenceSource, IHabitUsageSource, IDisposable
 {
     internal const string Schema = """
         CREATE TABLE IF NOT EXISTS traces (
@@ -293,6 +293,38 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         }
 
         return samples;
+    }
+
+    public HabitUsage Usage(string task)
+    {
+        using var command = Command(
+            "SELECT mode, path FROM traces WHERE task = $task AND mode IS NOT NULL ORDER BY created_at, trace_id", [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var last = new Dictionary<string, int>(StringComparer.Ordinal);
+        var index = -1;
+        while (reader.Read())
+        {
+            index++;
+            if (!reader.GetString(0).StartsWith("habit/", StringComparison.Ordinal) || reader.IsDBNull(1))
+            {
+                continue;
+            }
+
+            using var steps = JsonDocument.Parse(reader.GetString(1));
+            var count = steps.RootElement.GetArrayLength();
+            if (count == 0)
+            {
+                continue;
+            }
+
+            var step = steps.RootElement[count - 1];
+            if (step.GetProperty("outcome").GetString() == "accept" && step.GetProperty("chosen").GetString() is { Length: > 0 } chosen)
+            {
+                last[chosen] = index;
+            }
+        }
+
+        return new HabitUsage(last, index + 1);
     }
 
     /// <summary>The last node of a recorded path — read loosely, since another implementation may record more per step.</summary>
