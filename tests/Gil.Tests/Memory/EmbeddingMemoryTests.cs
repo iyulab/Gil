@@ -21,7 +21,7 @@ public sealed class EmbeddingMemoryTests
     public async Task The_transport_reads_vectors_in_input_order_and_the_recorder_prices_them_with_its_own_model()
     {
         using var handler = new Respond("""{"model":"embedder","data":[{"index":1,"embedding":[0,1]},{"index":0,"embedding":[1,0]}],"usage":{"prompt_tokens":7}}""");
-        var model = new OpenAICompatibleEmbeddingModel(new HttpClient(handler), new OpenAICompatibleOptions { BaseUrl = new Uri("http://model.test/"), ApiKey = "k", Model = "e" });
+        var model = new OpenAICompatibleEmbeddingModel(new OpenAICompatibleOptions { BaseUrl = new Uri("http://model.test/"), ApiKey = "k", Model = "e" }, handler);
         var sink = new ListSink();
 
         var (vectors, call) = await new EmbeddingRecorder(model, new EnergyModel(0, 0.01, 0, 0), sink).EmbedAsync(["a", "b"], "t", TestContext.Current.CancellationToken);
@@ -131,8 +131,7 @@ public sealed class EmbeddingMemoryTests
             Assert.Skip("GIL_LIVE_BASE_URL or GIL_LIVE_EMBEDDING_MODEL is not set");
         }
 
-        using var http = new HttpClient();
-        var model = new OpenAICompatibleEmbeddingModel(http, new OpenAICompatibleOptions
+        using var model = new OpenAICompatibleEmbeddingModel(new OpenAICompatibleOptions
         {
             BaseUrl = new Uri(baseUrl.TrimEnd('/') + "/"),
             ApiKey = Environment.GetEnvironmentVariable("GIL_LIVE_API_KEY") ?? "",

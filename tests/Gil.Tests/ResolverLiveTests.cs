@@ -25,8 +25,7 @@ public sealed class ResolverLiveTests
         var extra = Environment.GetEnvironmentVariable("GIL_LIVE_DISABLE_THINKING") == "1"
             ? new JsonObject { ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false } }
             : null;
-        using var http = new HttpClient();
-        var model = new OpenAICompatibleChatModel(http, new OpenAICompatibleOptions
+        using var model = IronHiveChatModel.OpenAICompatible(new OpenAICompatibleOptions
         {
             BaseUrl = new Uri(baseUrl.TrimEnd('/') + "/"),
             ApiKey = Environment.GetEnvironmentVariable("GIL_LIVE_API_KEY") ?? "",

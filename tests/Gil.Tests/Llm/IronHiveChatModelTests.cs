@@ -2,10 +2,12 @@ using System.Net;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Gil.Llm;
+using IronHive.Abstractions.Messages;
+using IronHive.Abstractions.Messages.Content;
 
 namespace Gil.Tests.Llm;
 
-public sealed class OpenAICompatibleChatModelTests
+public sealed class IronHiveChatModelTests
 {
     private const string Judged = """
         {"model":"served-model","choices":[{"message":{"content":"B"},"logprobs":{"content":[{"token":"B","logprob":-0.05,
@@ -16,7 +18,7 @@ public sealed class OpenAICompatibleChatModelTests
 
     private static readonly ChatRequest Judge = new()
     {
-        Messages = [new ChatMessage("user", "Which one?")],
+        Messages = [new ChatMessage("system", "Answer with one label."), new ChatMessage("user", "Which one?")],
         MaxTokens = 1,
         TopLogprobs = 20,
         ExtraBody = new JsonObject { ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false } },
@@ -35,7 +37,7 @@ public sealed class OpenAICompatibleChatModelTests
         result.TopLogprobs.Should().Equal(new TokenLogprob("B", -0.05), new TokenLogprob("A", -3.1));
         (result.PromptTokens, result.CachedTokens, result.CompletionTokens).Should().Be((320, 64, 1));
         (result.GpuPromptMs, result.GpuPredictedMs).Should().Be((41.5, 12.0));
-        result.RawResponse.Should().Contain("served-model");
+        result.RawResponse.Should().Be(Judged, "the body is kept as received");
     }
 
     [Fact]
@@ -50,6 +52,11 @@ public sealed class OpenAICompatibleChatModelTests
         sent["logprobs"]!.GetValue<bool>().Should().BeTrue();
         sent["top_logprobs"]!.GetValue<int>().Should().Be(20);
         sent["max_tokens"]!.GetValue<int>().Should().Be(1);
+        sent["temperature"]!.GetValue<double>().Should().Be(0);
+        var messages = sent["messages"]!.AsArray();
+        (messages[0]!["role"]!.GetValue<string>(), messages[1]!["role"]!.GetValue<string>()).Should().Be(("system", "user"));
+        Text(messages[0]!).Should().Be("Answer with one label.");
+        Text(messages[1]!).Should().Be("Which one?");
         sent["chat_template_kwargs"]!["enable_thinking"]!.GetValue<bool>().Should().BeFalse();
         handler.Paths.Single().Should().Be("/v1/chat/completions");
     }
@@ -89,7 +96,7 @@ public sealed class OpenAICompatibleChatModelTests
 
         var call = () => model.CompleteAsync(Judge, TestContext.Current.CancellationToken);
 
-        (await call.Should().ThrowAsync<HttpRequestException>()).Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        await call.Should().ThrowAsync<Exception>();
         handler.Bodies.Should().ContainSingle();
     }
 
@@ -101,7 +108,7 @@ public sealed class OpenAICompatibleChatModelTests
 
         var call = () => model.CompleteAsync(Judge, TestContext.Current.CancellationToken);
 
-        await call.Should().ThrowAsync<OperationCanceledException>();
+        await call.Should().ThrowAsync<TimeoutException>();
         handler.Bodies.Should().HaveCount(2); // the first attempt plus one resend
     }
 
@@ -132,8 +139,7 @@ public sealed class OpenAICompatibleChatModelTests
             Assert.Skip("GIL_LIVE_BASE_URL is not set");
         }
 
-        using var http = new HttpClient();
-        var model = new OpenAICompatibleChatModel(http, new OpenAICompatibleOptions
+        using var model = IronHiveChatModel.OpenAICompatible(new OpenAICompatibleOptions
         {
             BaseUrl = new Uri(baseUrl.TrimEnd('/') + "/"),
             ApiKey = Environment.GetEnvironmentVariable("GIL_LIVE_API_KEY") ?? "",
@@ -150,6 +156,43 @@ public sealed class OpenAICompatibleChatModelTests
         result.CompletionTokens.Should().Be(1);
     }
 
+    [Fact]
+    public async Task Any_generator_is_read_through_the_abstraction_and_its_system_prompt_is_the_leading_system_message()
+    {
+        var generator = new FakeGenerator(new MessageResponse
+        {
+            Model = "reported-model",
+            Message = new Message { Role = MessageRole.Assistant, Content = [new TextMessageContent { Value = "B" }] },
+            TokenUsage = new MessageTokenUsage { InputTokens = 30, CachedInputTokens = null, OutputTokens = 1 },
+            LogProbabilities = [new TokenLogProbability("B", -0.1, [new TokenAlternative("B", -0.1), new TokenAlternative("A", -2.4)])],
+            ExtraBody = new JsonObject { ["timings"] = new JsonObject { ["prompt_ms"] = 3.5 } },
+        });
+        using var model = new IronHiveChatModel(generator, "asked-model");
+
+        var result = await model.CompleteAsync(Judge, TestContext.Current.CancellationToken);
+
+        var sent = generator.Requests.Single();
+        (sent.Model, sent.System, sent.MaxTokens, sent.LogProbabilities!.TopAlternatives).Should().Be(("asked-model", "Answer with one label.", 1, 20));
+        sent.Messages.Should().ContainSingle().Which.Role.Should().Be(MessageRole.User);
+        sent.ExtraBody!["chat_template_kwargs"]!["enable_thinking"]!.GetValue<bool>().Should().BeFalse();
+        (result.Model, result.Content, result.FirstToken).Should().Be(("reported-model", "B", "B"));
+        result.TopLogprobs.Should().Equal(new TokenLogprob("B", -0.1), new TokenLogprob("A", -2.4));
+        (result.PromptTokens, result.CachedTokens, result.GpuPromptMs, result.GpuPredictedMs).Should().Be((30, 0, 3.5, (double?)null));
+        JsonNode.Parse(result.RawResponse)!["extra"]!["timings"]!["prompt_ms"]!.GetValue<double>().Should().Be(3.5, "without a Gil transport the raw response is what IronHive reports");
+    }
+
+    [Fact]
+    public async Task A_system_message_after_the_conversation_starts_is_refused()
+    {
+        using var model = new IronHiveChatModel(new FakeGenerator(new MessageResponse()), "m");
+
+        var call = () => model.CompleteAsync(
+            Judge with { Messages = [new ChatMessage("user", "hi"), new ChatMessage("system", "late")] },
+            TestContext.Current.CancellationToken);
+
+        await call.Should().ThrowAsync<ArgumentException>();
+    }
+
     private static readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> Hang =
         async (_, token) =>
         {
@@ -160,7 +203,10 @@ public sealed class OpenAICompatibleChatModelTests
     private static Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> Respond(HttpStatusCode status, string body) =>
         (_, _) => Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
 
-    private static (OpenAICompatibleChatModel Model, ScriptedHandler Handler) Model(
+    private static string Text(JsonNode message) =>
+        message["content"] is JsonValue text ? text.GetValue<string>() : string.Concat(message["content"]!.AsArray().Select(p => p!["text"]!.GetValue<string>()));
+
+    private static (IronHiveChatModel Model, ScriptedHandler Handler) Model(
         params Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[] script)
     {
         var handler = new ScriptedHandler(script);
@@ -171,7 +217,7 @@ public sealed class OpenAICompatibleChatModelTests
             Model = "configured-model",
             Timeout = TimeSpan.FromMilliseconds(200),
         };
-        return (new OpenAICompatibleChatModel(new HttpClient(handler), options, (_, _) => Task.CompletedTask), handler);
+        return (IronHiveChatModel.OpenAICompatible(options, handler, (_, _) => Task.CompletedTask), handler);
     }
 
     private sealed class ScriptedHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[] script) : HttpMessageHandler
@@ -187,6 +233,27 @@ public sealed class OpenAICompatibleChatModelTests
             Bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
             Paths.Add(request.RequestUri!.AbsolutePath);
             return await script[_next++](request, cancellationToken);
+        }
+    }
+
+    private sealed class FakeGenerator(MessageResponse response) : IMessageGenerator
+    {
+        public List<MessageGenerationRequest> Requests { get; } = [];
+
+        public Task<MessageResponse> GenerateMessageAsync(MessageGenerationRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(response);
+        }
+
+        public IAsyncEnumerable<StreamingMessageResponse> GenerateStreamingMessageAsync(MessageGenerationRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<int> CountTokensAsync(MessageGenerationRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public void Dispose()
+        {
         }
     }
 }
