@@ -36,13 +36,14 @@ internal static class ReadmeExample
         });
         var memory = new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store));
 
-        // A server whose chat template reasons by default must be told not to, or a one-token judgment returns no label.
+        // A server whose chat template reasons by default must be told not to by every caller: otherwise a one-token judgment
+        // returns no label, and generation and slot filling spend their budget on reasoning.
         var noThinking = new JsonObject { ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false } };
 
         var resolver = new Resolver(
             new GreedyTraverser(new SingleTokenJudge(recorder, new SingleTokenJudgeOptions { ExtraBody = noThinking })),
             new FallbackGenerator(recorder, extraBody: noThinking),
-            new SlotFiller(recorder),
+            new SlotFiller(recorder, extraBody: noThinking),
             sink: store,
             memory: memory,
             statistics: store,

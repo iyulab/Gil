@@ -34,11 +34,12 @@ public sealed class ResolverLiveTests
         });
         var directory = Directory.CreateTempSubdirectory("gil-live-").FullName;
         using var store = new SqliteTelemetryStore(Path.Combine(directory, "live.sqlite"));
-        var recorder = new CallRecorder(model, new EnergyModel(0, 1, 0.1, 4), store);
+        var sent = new SentRequests(model);
+        var recorder = new CallRecorder(sent, new EnergyModel(0, 1, 0.1, 4), store);
         var resolver = new Resolver(
             new GreedyTraverser(new SingleTokenJudge(recorder, new SingleTokenJudgeOptions { OrderSeed = 1, ExtraBody = extra })),
             new FallbackGenerator(recorder, extraBody: extra),
-            new SlotFiller(recorder),
+            new SlotFiller(recorder, extraBody: extra),
             store);
         var tree = OntologyYaml.Parse("""
             id: root
@@ -47,7 +48,12 @@ public sealed class ResolverLiveTests
                 label: alarm
                 description: setting, checking or removing alarms
                 options:
-                  - {id: set, kind: answer, label: set alarm, description: wake me up at seven, text: alarm_set}
+                  - id: set
+                    kind: template
+                    label: set alarm
+                    description: wake me up at seven
+                    template: "alarm_set at {time}"
+                    slots: [{name: time, instruction: the wake-up time}]
                   - {id: remove, kind: answer, label: remove alarm, description: cancel my morning alarm, text: alarm_remove}
               - id: weather
                 label: weather
@@ -60,8 +66,23 @@ public sealed class ResolverLiveTests
         var alarm = await resolver.ResolveAsync(task, "please wake me up at 6 tomorrow", cancellationToken: TestContext.Current.CancellationToken);
         var weather = await resolver.ResolveAsync(task, "is it going to rain this afternoon?", cancellationToken: TestContext.Current.CancellationToken);
 
-        alarm.Output.Should().Be("alarm_set");
+        // The alarm is a template habit: its blank is filled by a live slot-filling call.
+        alarm.Mode.Should().Be("habit/template");
+        alarm.Output.Should().StartWith("alarm_set at ");
         weather.Output.Should().Be("weather_query");
         alarm.Path.Should().NotBeEmpty();
+        // Every role — judgments and slot filling alike — carries the server setting.
+        sent.Requests.Should().AllSatisfy(r => r.ExtraBody.Should().BeSameAs(extra));
+    }
+
+    private sealed class SentRequests(IChatModel inner) : IChatModel
+    {
+        public List<ChatRequest> Requests { get; } = [];
+
+        public Task<ChatResult> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return inner.CompleteAsync(request, cancellationToken);
+        }
     }
 }
