@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Gil.Fallback;
 using Gil.Llm;
@@ -39,17 +38,6 @@ public sealed class SlotFillerTests
         filled.FailedReason.Should().Contain("item");
         model.Requests.Should().HaveCount(2);
         model.Requests[1].Messages[1].Content.Should().Contain("빠진 빈칸: [item]");
-    }
-
-    [Fact]
-    public async Task Provider_fields_go_with_every_call()
-    {
-        var model = new ScriptedModel("not json", """{"item": "the form"}""");
-        var extra = new JsonObject { ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false } };
-
-        await new SlotFiller(new CallRecorder(model, new EnergyModel(1, 0, 0, 0)), extraBody: extra).FillAsync("I sent the form", Received, "t", TestContext.Current.CancellationToken);
-
-        model.Requests.Should().HaveCount(2).And.AllSatisfy(r => r.ExtraBody.Should().BeSameAs(extra));
     }
 
     private sealed class ScriptedModel(params string[] answers) : IChatModel

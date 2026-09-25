@@ -23,26 +23,30 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
     private readonly IMessageGenerator _generator;
     private readonly string _model;
     private readonly bool _ownsGenerator;
+    private readonly JsonObject? _extraBody;
 
     /// <param name="generator">The provider to call; the caller keeps ownership.</param>
     /// <param name="model">The model to ask for.</param>
-    public IronHiveChatModel(IMessageGenerator generator, string model)
-        : this(generator, model, ownsGenerator: false)
+    /// <param name="extraBody">Provider fields sent with every request (for example a server's chat-template
+    /// switches); a request's own <see cref="ChatRequest.ExtraBody"/> replaces a field of the same name.</param>
+    public IronHiveChatModel(IMessageGenerator generator, string model, JsonObject? extraBody = null)
+        : this(generator, model, extraBody, ownsGenerator: false)
     {
     }
 
-    private IronHiveChatModel(IMessageGenerator generator, string model, bool ownsGenerator)
+    private IronHiveChatModel(IMessageGenerator generator, string model, JsonObject? extraBody, bool ownsGenerator)
     {
         ArgumentNullException.ThrowIfNull(generator);
         ArgumentException.ThrowIfNullOrEmpty(model);
         (_generator, _model, _ownsGenerator) = (generator, model, ownsGenerator);
+        _extraBody = (JsonObject?)extraBody?.DeepClone();
     }
 
     /// <summary>
     /// A model on an OpenAI-compatible chat-completions server (OpenAI, and self-hosted servers such as llama.cpp and
     /// vLLM), sent with the shared retry rules of <see cref="OpenAICompatibleOptions"/>.
     /// </summary>
-    /// <param name="options">Endpoint, model and retries.</param>
+    /// <param name="options">Endpoint, model, retries and the fields every request carries.</param>
     /// <param name="transport">The handler that sends; a socket handler by default.</param>
     /// <param name="delay">Backoff between retries; the real clock by default.</param>
     public static IronHiveChatModel OpenAICompatible(
@@ -60,7 +64,7 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
             // The long-standing name, which self-hosted servers accept; a server that does not know the name it gets drops the limit silently.
             TokenLimitParameter = TokenLimitParameter.MaxTokens,
         };
-        return new IronHiveChatModel(generator, options.Model, ownsGenerator: true);
+        return new IronHiveChatModel(generator, options.Model, options.ExtraBody, ownsGenerator: true);
     }
 
     public async Task<ChatResult> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default)
@@ -124,8 +128,25 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
             MaxTokens = request.MaxTokens,
             Temperature = (float)request.Temperature,
             LogProbabilities = request.TopLogprobs is int top ? new LogProbabilityOptions { TopAlternatives = top } : null,
-            ExtraBody = (JsonObject?)request.ExtraBody?.DeepClone(),
+            ExtraBody = Merge(_extraBody, request.ExtraBody),
         };
+    }
+
+    /// <summary>The model's fields, with the request's replacing any of the same name; a fresh object either way.</summary>
+    private static JsonObject? Merge(JsonObject? defaults, JsonObject? request)
+    {
+        if (defaults is null)
+        {
+            return (JsonObject?)request?.DeepClone();
+        }
+
+        var merged = (JsonObject)defaults.DeepClone();
+        foreach (var (name, value) in request ?? [])
+        {
+            merged[name] = value?.DeepClone();
+        }
+
+        return merged;
     }
 
     private static double? Number(JsonObject? parent, string name) =>

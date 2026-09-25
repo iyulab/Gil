@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using Gil.Llm;
 
 namespace Gil.Fallback;
@@ -24,7 +23,7 @@ public sealed record FallbackPromptTemplate
 /// Full generation under an output contract. The categories the tree already confirmed are passed as context: they
 /// are settled, so the model need not infer them again. A violation is fed back into the next attempt.
 /// </summary>
-public sealed class FallbackGenerator(CallRecorder recorder, int maxAttempts = 3, FallbackPromptTemplate? template = null, JsonObject? extraBody = null)
+public sealed class FallbackGenerator(CallRecorder recorder, int maxAttempts = 3, FallbackPromptTemplate? template = null)
 {
     private readonly FallbackPromptTemplate _template = template ?? new FallbackPromptTemplate();
     private readonly int _maxAttempts = Math.Max(1, maxAttempts);
@@ -51,7 +50,6 @@ public sealed class FallbackGenerator(CallRecorder recorder, int maxAttempts = 3
                     new ChatMessage("user", Prompt(state, contract, pathLabels, examples, complaint)),
                 ],
                 MaxTokens = maxTokens,
-                ExtraBody = extraBody,
             };
             var call = await recorder.CompleteAsync(request, "fallback", traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
             energy += call.Energy;

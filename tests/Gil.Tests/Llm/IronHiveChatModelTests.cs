@@ -62,6 +62,30 @@ public sealed class IronHiveChatModelTests
     }
 
     [Fact]
+    public async Task Fields_set_on_the_endpoint_go_with_every_request_and_a_request_field_replaces_one_of_the_same_name()
+    {
+        var endpoint = new JsonObject
+        {
+            ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false },
+            ["cache_prompt"] = true,
+        };
+        var (model, handler) = Model(endpoint, Respond(HttpStatusCode.OK, Judged), Respond(HttpStatusCode.OK, Judged));
+        var plain = Judge with { ExtraBody = null };
+        var own = Judge with { ExtraBody = new JsonObject { ["cache_prompt"] = false } };
+
+        await model.CompleteAsync(plain, TestContext.Current.CancellationToken);
+        await model.CompleteAsync(own, TestContext.Current.CancellationToken);
+
+        var (first, second) = (JsonNode.Parse(handler.Bodies[0])!, JsonNode.Parse(handler.Bodies[1])!);
+        first["chat_template_kwargs"]!["enable_thinking"]!.GetValue<bool>().Should().BeFalse();
+        first["cache_prompt"]!.GetValue<bool>().Should().BeTrue();
+        second["chat_template_kwargs"]!["enable_thinking"]!.GetValue<bool>().Should().BeFalse();
+        second["cache_prompt"]!.GetValue<bool>().Should().BeFalse("the request's field replaces the endpoint's");
+        endpoint["cache_prompt"]!.GetValue<bool>().Should().BeTrue("the configured fields are not changed by a request");
+        own.ExtraBody!.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task A_response_without_logprobs_or_timings_is_still_read()
     {
         var (model, _) = Model(Respond(HttpStatusCode.OK, """{"choices":[{"message":{"content":"hello"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"""));
@@ -167,11 +191,12 @@ public sealed class IronHiveChatModelTests
             LogProbabilities = [new TokenLogProbability("B", -0.1, [new TokenAlternative("B", -0.1), new TokenAlternative("A", -2.4)])],
             ExtraBody = new JsonObject { ["timings"] = new JsonObject { ["prompt_ms"] = 3.5 } },
         });
-        using var model = new IronHiveChatModel(generator, "asked-model");
+        using var model = new IronHiveChatModel(generator, "asked-model", new JsonObject { ["cache_prompt"] = true });
 
         var result = await model.CompleteAsync(Judge, TestContext.Current.CancellationToken);
 
         var sent = generator.Requests.Single();
+        sent.ExtraBody!["cache_prompt"]!.GetValue<bool>().Should().BeTrue("the model's own fields go with requests to any generator");
         (sent.Model, sent.System, sent.MaxTokens, sent.LogProbabilities!.TopAlternatives).Should().Be(("asked-model", "Answer with one label.", 1, 20));
         sent.Messages.Should().ContainSingle().Which.Role.Should().Be(MessageRole.User);
         sent.ExtraBody!["chat_template_kwargs"]!["enable_thinking"]!.GetValue<bool>().Should().BeFalse();
@@ -207,7 +232,10 @@ public sealed class IronHiveChatModelTests
         message["content"] is JsonValue text ? text.GetValue<string>() : string.Concat(message["content"]!.AsArray().Select(p => p!["text"]!.GetValue<string>()));
 
     private static (IronHiveChatModel Model, ScriptedHandler Handler) Model(
-        params Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[] script)
+        params Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[] script) => Model(null, script);
+
+    private static (IronHiveChatModel Model, ScriptedHandler Handler) Model(
+        JsonObject? extraBody, params Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>[] script)
     {
         var handler = new ScriptedHandler(script);
         var options = new OpenAICompatibleOptions
@@ -216,6 +244,7 @@ public sealed class IronHiveChatModelTests
             ApiKey = "key",
             Model = "configured-model",
             Timeout = TimeSpan.FromMilliseconds(200),
+            ExtraBody = extraBody,
         };
         return (IronHiveChatModel.OpenAICompatible(options, handler, (_, _) => Task.CompletedTask), handler);
     }

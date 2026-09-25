@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Text.Json.Nodes;
 
 namespace Gil.Llm;
 
@@ -27,6 +28,14 @@ public sealed record OpenAICompatibleOptions
 
     /// <summary>How long to wait for a connection to open.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Provider-specific fields merged into every request body sent to this endpoint — for example a server's
+    /// chat-template switches. Set once here, every caller of the model sends them; a request's own
+    /// <see cref="ChatRequest.ExtraBody"/> replaces a field of the same name. Fields a server does not know may be
+    /// rejected, so set only what this endpoint accepts.
+    /// </summary>
+    public JsonObject? ExtraBody { get; init; }
 }
 
 /// <summary>Builds the HTTP clients every OpenAI-compatible call goes through.</summary>

@@ -21,7 +21,8 @@ public sealed class EmbeddingMemoryTests
     public async Task The_transport_reads_vectors_in_input_order_and_the_recorder_prices_them_with_its_own_model()
     {
         using var handler = new Respond("""{"model":"embedder","data":[{"index":1,"embedding":[0,1]},{"index":0,"embedding":[1,0]}],"usage":{"prompt_tokens":7}}""");
-        var model = new OpenAICompatibleEmbeddingModel(new OpenAICompatibleOptions { BaseUrl = new Uri("http://model.test/"), ApiKey = "k", Model = "e" }, handler);
+        var model = new OpenAICompatibleEmbeddingModel(
+            new OpenAICompatibleOptions { BaseUrl = new Uri("http://model.test/"), ApiKey = "k", Model = "e", ExtraBody = new JsonObject { ["dimensions"] = 2 } }, handler);
         var sink = new ListSink();
 
         var (vectors, call) = await new EmbeddingRecorder(model, new EnergyModel(0, 0.01, 0, 0), sink).EmbedAsync(["a", "b"], "t", TestContext.Current.CancellationToken);
@@ -29,7 +30,9 @@ public sealed class EmbeddingMemoryTests
         vectors.Should().HaveCount(2);
         vectors[0].Should().Equal(1f, 0f);
         (call.Role, call.PromptTokens, call.Energy, call.Model).Should().Be(("embed", 7, 0.07, "embedder"));
-        JsonNode.Parse(handler.Body!)!["input"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Equal("a", "b");
+        var sent = JsonNode.Parse(handler.Body!)!;
+        sent["input"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Equal("a", "b");
+        (sent["model"]!.GetValue<string>(), sent["dimensions"]!.GetValue<int>()).Should().Be(("e", 2));
         call.RawResponse.Should().NotContain("embedding");
         sink.Calls.Should().ContainSingle();
     }

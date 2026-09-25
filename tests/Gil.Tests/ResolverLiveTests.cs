@@ -25,21 +25,22 @@ public sealed class ResolverLiveTests
         var extra = Environment.GetEnvironmentVariable("GIL_LIVE_DISABLE_THINKING") == "1"
             ? new JsonObject { ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false } }
             : null;
+        using var wire = new SentBodies(new SocketsHttpHandler());
         using var model = IronHiveChatModel.OpenAICompatible(new OpenAICompatibleOptions
         {
             BaseUrl = new Uri(baseUrl.TrimEnd('/') + "/"),
             ApiKey = Environment.GetEnvironmentVariable("GIL_LIVE_API_KEY") ?? "",
             Model = Environment.GetEnvironmentVariable("GIL_LIVE_MODEL") ?? "",
             Timeout = TimeSpan.FromMinutes(3),
-        });
+            ExtraBody = extra,
+        }, wire);
         var directory = Directory.CreateTempSubdirectory("gil-live-").FullName;
         using var store = new SqliteTelemetryStore(Path.Combine(directory, "live.sqlite"));
-        var sent = new SentRequests(model);
-        var recorder = new CallRecorder(sent, new EnergyModel(0, 1, 0.1, 4), store);
+        var recorder = new CallRecorder(model, new EnergyModel(0, 1, 0.1, 4), store);
         var resolver = new Resolver(
-            new GreedyTraverser(new SingleTokenJudge(recorder, new SingleTokenJudgeOptions { OrderSeed = 1, ExtraBody = extra })),
-            new FallbackGenerator(recorder, extraBody: extra),
-            new SlotFiller(recorder, extraBody: extra),
+            new GreedyTraverser(new SingleTokenJudge(recorder, new SingleTokenJudgeOptions { OrderSeed = 1 })),
+            new FallbackGenerator(recorder),
+            new SlotFiller(recorder),
             store);
         var tree = OntologyYaml.Parse("""
             id: root
@@ -71,18 +72,19 @@ public sealed class ResolverLiveTests
         alarm.Output.Should().StartWith("alarm_set at ");
         weather.Output.Should().Be("weather_query");
         alarm.Path.Should().NotBeEmpty();
-        // Every role — judgments and slot filling alike — carries the server setting.
-        sent.Requests.Should().AllSatisfy(r => r.ExtraBody.Should().BeSameAs(extra));
+        // Every role — judgments and slot filling alike — carries the setting made once on the endpoint.
+        wire.Bodies.Should().NotBeEmpty().And.AllSatisfy(body =>
+            JsonNode.Parse(body)!["chat_template_kwargs"]?.ToJsonString().Should().Be(extra?["chat_template_kwargs"]?.ToJsonString()));
     }
 
-    private sealed class SentRequests(IChatModel inner) : IChatModel
+    private sealed class SentBodies(HttpMessageHandler inner) : DelegatingHandler(inner)
     {
-        public List<ChatRequest> Requests { get; } = [];
+        public List<string> Bodies { get; } = [];
 
-        public Task<ChatResult> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Requests.Add(request);
-            return inner.CompleteAsync(request, cancellationToken);
+            Bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+            return await base.SendAsync(request, cancellationToken);
         }
     }
 }

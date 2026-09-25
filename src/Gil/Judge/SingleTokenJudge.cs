@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json.Nodes;
 using Gil.Llm;
 
 namespace Gil.Judge;
@@ -31,9 +30,6 @@ public sealed record SingleTokenJudgeOptions
     public int? OrderSeed { get; init; }
 
     public int TopLogprobs { get; init; } = 20;
-
-    /// <summary>Backend-specific request fields (e.g. turning a server's reasoning mode off, without which no label comes back).</summary>
-    public JsonObject? ExtraBody { get; init; }
 
     public JudgePromptTemplate Prompt { get; init; } = new();
 }
@@ -69,7 +65,6 @@ public sealed class SingleTokenJudge(CallRecorder recorder, SingleTokenJudgeOpti
             MaxTokens = 1,
             Temperature = 0,
             TopLogprobs = _options.TopLogprobs,
-            ExtraBody = _options.ExtraBody,
         };
 
         LabelDistribution? distribution = null;

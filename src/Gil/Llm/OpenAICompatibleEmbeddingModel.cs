@@ -33,7 +33,10 @@ public sealed class OpenAICompatibleEmbeddingModel : IEmbeddingModel, IDisposabl
         ArgumentNullException.ThrowIfNull(texts);
         var capture = ResponseCapture.Begin();
         var started = Stopwatch.GetTimestamp();
-        var body = new JsonObject { ["model"] = _options.Model, ["input"] = new JsonArray([.. texts.Select(t => JsonValue.Create(t))]) }.ToJsonString();
+        var request = (JsonObject?)_options.ExtraBody?.DeepClone() ?? [];
+        request["model"] = _options.Model;
+        request["input"] = new JsonArray([.. texts.Select(t => JsonValue.Create(t))]);
+        var body = request.ToJsonString();
         using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_options.BaseUrl, "v1/embeddings"))
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json"),

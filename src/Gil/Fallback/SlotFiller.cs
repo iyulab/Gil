@@ -14,9 +14,7 @@ public sealed record SlotFillResult(string? Output, double Energy, string? Faile
 /// </summary>
 /// <param name="recorder">Sends and records each call.</param>
 /// <param name="maxAttempts">Calls before giving up on missing blanks.</param>
-/// <param name="extraBody">Provider fields sent with every call, as for the judge and fallback — for example, turning
-/// off a chat template's reasoning mode, which otherwise spends most of the short answer's budget on reasoning.</param>
-public sealed partial class SlotFiller(CallRecorder recorder, int maxAttempts = 2, JsonObject? extraBody = null)
+public sealed partial class SlotFiller(CallRecorder recorder, int maxAttempts = 2)
 {
     private const string System = "너는 빈칸을 채운다. 반드시 JSON 객체 하나만 출력한다.";
 
@@ -40,7 +38,6 @@ public sealed partial class SlotFiller(CallRecorder recorder, int maxAttempts = 
             {
                 Messages = [new ChatMessage("system", System), new ChatMessage("user", Prompt(state, template, wanted, complaint))],
                 MaxTokens = 256,
-                ExtraBody = extraBody,
             };
             var call = await recorder.CompleteAsync(request, "slot_fill", traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
             energy += call.Energy;
