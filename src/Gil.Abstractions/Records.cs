@@ -67,6 +67,9 @@ public sealed record CallRecord
 /// <param name="Outcome">accept, exit, skip or defer.</param>
 /// <param name="Probs">Normalized probability per candidate id.</param>
 /// <param name="Energy">Energy of the step's call.</param>
+/// <param name="NoneProb">Probability of the "none of these" label — on an exit it tells "none of these won" from "no
+/// candidate was confident enough", which call for different fixes. Null on a skip, and in records written before it
+/// was kept.</param>
 public sealed record PathStep(
     string Node,
     int Layer,
@@ -74,7 +77,8 @@ public sealed record PathStep(
     double P,
     string Outcome,
     IReadOnlyDictionary<string, double> Probs,
-    double Energy);
+    double Energy,
+    double? NoneProb = null);
 
 /// <summary>
 /// The memory lookup of a request: the nearest remembered request, kept even on a miss so the threshold can be

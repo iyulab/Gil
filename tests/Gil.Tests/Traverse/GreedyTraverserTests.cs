@@ -65,6 +65,7 @@ public sealed class GreedyTraverserTests
 
         result.ExitReason.Should().Be(reason);
         result.Path.Single().Should().Match<PathStep>(s => s.Outcome == "exit" && s.Chosen == null);
+        result.Path.Single().NoneProb!.Value.Should().BeApproximately(choice is null ? 1 : 1 - confidence, 1e-12, "the step says whether 'none of these' won");
         result.Confirmed.Should().BeEmpty();
     }
 

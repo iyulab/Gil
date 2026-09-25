@@ -69,7 +69,7 @@ public sealed class GreedyTraverser(IJudge judge)
                 : null;
             if (reason is not null)
             {
-                steps.Add(new PathStep(current.Id, layer, null, judgment.Confidence, "exit", judgment.Probs, judgment.Call.Energy));
+                steps.Add(new PathStep(current.Id, layer, null, judgment.Confidence, "exit", judgment.Probs, judgment.Call.Energy, judgment.NoneProb));
                 return new TraverseResult(steps, null, reason, energy, calls);
             }
 
@@ -78,11 +78,11 @@ public sealed class GreedyTraverser(IJudge judge)
             if (child is null && habit is null)
             {
                 // A shadow: a known answer that is not a habit yet. Defer to the fallback.
-                steps.Add(new PathStep(current.Id, layer, judgment.Choice, judgment.Confidence, "defer", judgment.Probs, judgment.Call.Energy));
+                steps.Add(new PathStep(current.Id, layer, judgment.Choice, judgment.Confidence, "defer", judgment.Probs, judgment.Call.Energy, judgment.NoneProb));
                 return new TraverseResult(steps, null, "shadow", energy, calls);
             }
 
-            steps.Add(new PathStep(current.Id, layer, judgment.Choice, judgment.Confidence, "accept", judgment.Probs, judgment.Call.Energy));
+            steps.Add(new PathStep(current.Id, layer, judgment.Choice, judgment.Confidence, "accept", judgment.Probs, judgment.Call.Energy, judgment.NoneProb));
             if (habit is not null)
             {
                 return new TraverseResult(steps, habit, null, energy, calls);
