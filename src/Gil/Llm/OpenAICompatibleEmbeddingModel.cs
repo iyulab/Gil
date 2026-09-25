@@ -8,11 +8,11 @@ namespace Gil.Llm;
 
 /// <summary>Embeddings over the OpenAI-compatible HTTP API, with the same retry rules as chat completions.</summary>
 /// <remarks>
-/// A transport of its own because IronHive's embedding abstraction does not yet return what the call is priced and
-/// recorded with: the input tokens the provider reports and the model that answered.
+/// A transport of its own because IronHive's embedding abstraction has no place for provider-specific request fields,
+/// so <see cref="OpenAICompatibleOptions.ExtraBody"/> would reach chat requests but not embedding requests.
 /// </remarks>
-// TODO(upstream): replace with an adapter over IronHive's IEmbeddingGenerator once it returns provider-reported usage
-// and the served model; remove this transport then.
+// TODO(upstream): replace with an adapter over IronHive's IEmbeddingGenerator once its requests can carry extra body
+// fields; remove this transport then.
 public sealed class OpenAICompatibleEmbeddingModel : IEmbeddingModel, IDisposable
 {
     private readonly HttpClient _http;
