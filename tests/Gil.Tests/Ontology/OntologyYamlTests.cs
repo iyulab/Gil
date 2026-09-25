@@ -151,11 +151,12 @@ public sealed class OntologyYamlTests
     [Fact]
     public void Reads_every_tree_file_another_implementation_wrote()
     {
-        // Point GIL_COMPAT_ONTOLOGY at a directory of tree files written elsewhere to check they load unchanged.
-        var directory = Environment.GetEnvironmentVariable("GIL_COMPAT_ONTOLOGY");
+        // A directory of tree files written elsewhere — the committed synthetic trees, or a directory GIL_COMPAT_ONTOLOGY
+        // points at — to check they load unchanged.
+        var directory = Conformance.Fixture("GIL_COMPAT_ONTOLOGY", "trees");
         if (directory is null)
         {
-            Assert.Skip("GIL_COMPAT_ONTOLOGY is not set");
+            Assert.Skip("GIL_COMPAT_ONTOLOGY is not set and the committed trees are missing");
         }
 
         var files = Directory.GetFiles(directory, "*.yaml");

@@ -89,12 +89,13 @@ public sealed class DeactivationTests : IDisposable
     [Fact]
     public void Proposes_what_the_reference_implementation_proposed_from_the_same_run()
     {
-        // Point GIL_COMPAT_DEACTIVATION at a run's final tree, habit counts and requests, with the proposals another
-        // implementation made under a few policies. The requests are written to a store so usage is read for real.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_DEACTIVATION");
+        // A run's final tree, habit counts and requests, with the proposals another implementation made under a few
+        // policies — the committed synthetic fixture, or a file GIL_COMPAT_DEACTIVATION points at. The requests are
+        // written to a store so usage is read for real.
+        var path = Conformance.Fixture("GIL_COMPAT_DEACTIVATION", "deactivation.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_DEACTIVATION is not set");
+            Assert.Skip("GIL_COMPAT_DEACTIVATION is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));

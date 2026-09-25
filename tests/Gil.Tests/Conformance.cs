@@ -16,6 +16,6 @@ internal static class Conformance
         }
 
         var committed = Path.Combine(AppContext.BaseDirectory, "conformance", file);
-        return File.Exists(committed) ? committed : null;
+        return File.Exists(committed) || Directory.Exists(committed) ? committed : null;
     }
 }

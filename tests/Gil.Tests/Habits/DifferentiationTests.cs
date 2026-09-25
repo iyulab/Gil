@@ -96,12 +96,12 @@ public sealed class DifferentiationTests
     [Fact]
     public void Signals_what_the_reference_implementation_signalled_on_the_same_runs()
     {
-        // Point GIL_COMPAT_DIFFERENTIATION at runs' final trees, promotion evidence and contracts, with the signals
-        // another implementation raised from them.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_DIFFERENTIATION");
+        // Runs' final trees, promotion evidence and contracts, with the signals another implementation raised from them —
+        // the committed synthetic fixture, or a file GIL_COMPAT_DIFFERENTIATION points at.
+        var path = Conformance.Fixture("GIL_COMPAT_DIFFERENTIATION", "differentiation.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_DIFFERENTIATION is not set");
+            Assert.Skip("GIL_COMPAT_DIFFERENTIATION is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
