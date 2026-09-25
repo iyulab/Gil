@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Gil.Judge;
 
 namespace Gil.Habits;
@@ -19,13 +17,8 @@ public static class ShadowIndex
 {
     public const string Prefix = "shadow-";
 
-    private const int LabelLength = 40;
-
     /// <summary>A stable id for an anchor's shadow, the same across implementations sharing a log.</summary>
-#pragma warning disable CA5350 // An identifier, not a security boundary: it must match the ids other implementations derive.
-    public static string Id(string anchor, string text) =>
-        Prefix + Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes($"{anchor}\n{text}")))[..10];
-#pragma warning restore CA5350
+    public static string Id(string anchor, string text) => DerivedHabits.Id(Prefix, anchor, text);
 
     public static bool IsShadow(string? candidateId) => candidateId?.StartsWith(Prefix, StringComparison.Ordinal) == true;
 
@@ -99,22 +92,9 @@ public static class ShadowIndex
 
             // OrderBy is stable: equal support keeps first-seen order.
             index[anchor] = [.. counts.OrderByDescending(c => c.Count).Take(room)
-                .Select(c => new Candidate(Id(anchor, c.Text), Truncate(c.Text), c.Example, c.Text))];
+                .Select(c => new Candidate(Id(anchor, c.Text), DerivedHabits.Label(c.Text), c.Example, c.Text))];
         }
 
         return index;
-    }
-
-    /// <summary>The first characters by code point, so a label never splits a character.</summary>
-    private static string Truncate(string text)
-    {
-        var runes = text.EnumerateRunes().Take(LabelLength);
-        var builder = new StringBuilder();
-        foreach (var rune in runes)
-        {
-            builder.Append(rune.ToString());
-        }
-
-        return builder.ToString();
     }
 }

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Gil.Habits;
 using Microsoft.Data.Sqlite;
 
 namespace Gil.Telemetry;
@@ -10,7 +11,7 @@ namespace Gil.Telemetry;
 /// any language read these files directly, so columns may be added but never renamed or repurposed.
 /// Timestamps are UTC ISO-8601 strings; JSON columns keep non-ASCII text unescaped.
 /// </summary>
-public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IDisposable
+public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IPromotionEvidenceSource, IDisposable
 {
     internal const string Schema = """
         CREATE TABLE IF NOT EXISTS traces (
@@ -221,23 +222,88 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         var evidence = new List<ShadowEvidence>();
         while (reader.Read())
         {
-            // Only the anchor matters, and a path recorded by another implementation may carry more fields per step.
-            using var path = JsonDocument.Parse(reader.GetString(1));
-            if (path.RootElement.GetArrayLength() == 0)
+            if (LastNode(reader.GetString(1)) is not { } anchor)
             {
                 continue;
             }
 
             evidence.Add(new ShadowEvidence(
-                reader.GetString(0),
-                path.RootElement[path.RootElement.GetArrayLength() - 1].GetProperty("node").GetString()!,
-                Text(reader, 2), Text(reader, 3), Text(reader, 4), Text(reader, 5), Text(reader, 6)));
+                reader.GetString(0), anchor, Text(reader, 2), Text(reader, 3), Text(reader, 4), Text(reader, 5), Text(reader, 6)));
         }
 
         return evidence;
-
-        static string? Text(SqliteDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
+
+    public IReadOnlyList<PromotionCandidate> PromotionCandidates(string task)
+    {
+        using var command = Command(
+            "SELECT trace_id, state, path, output, feedback_verdict, feedback_correction, "
+            + "(SELECT COALESCE(SUM(energy), 0) FROM calls WHERE calls.trace_id = traces.trace_id AND role = 'fallback') "
+            + "FROM traces WHERE task = $task AND mode IN ('fallback', 'partial') AND path IS NOT NULL ORDER BY created_at, trace_id",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var candidates = new List<PromotionCandidate>();
+        while (reader.Read())
+        {
+            if (LastNode(reader.GetString(2)) is not { } anchor)
+            {
+                continue;
+            }
+
+            candidates.Add(new PromotionCandidate(
+                reader.GetString(0), reader.GetString(1), anchor, Text(reader, 3), Text(reader, 4), Text(reader, 5), reader.GetDouble(6)));
+        }
+
+        return candidates;
+    }
+
+    public IReadOnlyDictionary<string, double> JudgeEnergyByNode(string task)
+    {
+        using var command = Command(
+            "SELECT calls.node_id, AVG(calls.energy) FROM calls JOIN traces ON traces.trace_id = calls.trace_id "
+            + "WHERE traces.task = $task AND calls.role = 'judge' AND calls.node_id IS NOT NULL GROUP BY calls.node_id",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var energy = new Dictionary<string, double>(StringComparer.Ordinal);
+        while (reader.Read())
+        {
+            energy[reader.GetString(0)] = reader.GetDouble(1);
+        }
+
+        return energy;
+    }
+
+    public IReadOnlyList<JudgeCostSample> JudgeCostSamples(string task)
+    {
+        using var command = Command(
+            "SELECT calls.energy, calls.candidates, traces.state FROM calls JOIN traces ON traces.trace_id = calls.trace_id "
+            + "WHERE traces.task = $task AND calls.role = 'judge' AND calls.candidates IS NOT NULL",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var samples = new List<JudgeCostSample>();
+        while (reader.Read())
+        {
+            var shown = JsonSerializer.Deserialize<List<ShownCandidate>>(reader.GetString(1), Json) ?? [];
+            var state = DerivedHabits.Length(Text(reader, 2));
+            samples.Add(new JudgeCostSample(
+                state + shown.Sum(c => DerivedHabits.Length(c.Label) + DerivedHabits.Length(c.Description)),
+                reader.GetDouble(0),
+                state,
+                shown.Where(c => c.Id is null).Select(c => DerivedHabits.Length(c.Label)).DefaultIfEmpty(0).Max()));
+        }
+
+        return samples;
+    }
+
+    /// <summary>The last node of a recorded path — read loosely, since another implementation may record more per step.</summary>
+    private static string? LastNode(string path)
+    {
+        using var steps = JsonDocument.Parse(path);
+        var count = steps.RootElement.GetArrayLength();
+        return count == 0 ? null : steps.RootElement[count - 1].GetProperty("node").GetString();
+    }
+
+    private static string? Text(SqliteDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 
     public void RecordPath(string scope, IReadOnlyList<PathStep> path)
     {
