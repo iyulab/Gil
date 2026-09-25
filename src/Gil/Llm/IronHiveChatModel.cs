@@ -22,6 +22,7 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
 {
     private readonly IMessageGenerator _generator;
     private readonly string _model;
+    private readonly HttpClient? _ownedHttp;
     private readonly bool _ownsGenerator;
     private readonly JsonObject? _extraBody;
 
@@ -30,15 +31,15 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
     /// <param name="extraBody">Provider fields sent with every request (for example a server's chat-template
     /// switches); a request's own <see cref="ChatRequest.ExtraBody"/> replaces a field of the same name.</param>
     public IronHiveChatModel(IMessageGenerator generator, string model, JsonObject? extraBody = null)
-        : this(generator, model, extraBody, ownsGenerator: false)
+        : this(generator, model, extraBody, ownsGenerator: false, ownedHttp: null)
     {
     }
 
-    private IronHiveChatModel(IMessageGenerator generator, string model, JsonObject? extraBody, bool ownsGenerator)
+    private IronHiveChatModel(IMessageGenerator generator, string model, JsonObject? extraBody, bool ownsGenerator, HttpClient? ownedHttp)
     {
         ArgumentNullException.ThrowIfNull(generator);
         ArgumentException.ThrowIfNullOrEmpty(model);
-        (_generator, _model, _ownsGenerator) = (generator, model, ownsGenerator);
+        (_generator, _model, _ownsGenerator, _ownedHttp) = (generator, model, ownsGenerator, ownedHttp);
         _extraBody = (JsonObject?)extraBody?.DeepClone();
     }
 
@@ -53,18 +54,19 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
         OpenAICompatibleOptions options, HttpMessageHandler? transport = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         ArgumentNullException.ThrowIfNull(options);
+        // IronHive uses an injected client as given and leaves it to its owner, which is this model.
+        var http = OpenAICompatibleHttp.CreateClient(options, transport, delay);
         var generator = new ChatCompletionMessageGenerator(new OpenAIConfig
         {
             BaseUrl = new Uri(options.BaseUrl, "v1/").ToString(),
             ApiKey = options.ApiKey,
-            // A client of its own: the generator configures and disposes the client it is given.
-            HttpClient = OpenAICompatibleHttp.CreateClient(options, transport, delay),
+            HttpClient = http,
         })
         {
             // The long-standing name, which self-hosted servers accept; a server that does not know the name it gets drops the limit silently.
             TokenLimitParameter = TokenLimitParameter.MaxTokens,
         };
-        return new IronHiveChatModel(generator, options.Model, options.ExtraBody, ownsGenerator: true);
+        return new IronHiveChatModel(generator, options.Model, options.ExtraBody, ownsGenerator: true, ownedHttp: http);
     }
 
     public async Task<ChatResult> CompleteAsync(ChatRequest request, CancellationToken cancellationToken = default)
@@ -100,6 +102,8 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
         {
             _generator.Dispose();
         }
+
+        _ownedHttp?.Dispose();
     }
 
     private MessageGenerationRequest ToGeneration(ChatRequest request)

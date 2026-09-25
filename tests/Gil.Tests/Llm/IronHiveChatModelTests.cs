@@ -41,6 +41,18 @@ public sealed class IronHiveChatModelTests
     }
 
     [Fact]
+    public async Task Disposing_the_model_releases_the_client_it_built()
+    {
+        var (model, handler) = Model(Respond(HttpStatusCode.OK, Judged));
+        await model.CompleteAsync(Judge, TestContext.Current.CancellationToken);
+
+        handler.Disposed.Should().BeFalse("the model still owns its client");
+        model.Dispose();
+
+        handler.Disposed.Should().BeTrue("the generator leaves an injected client to its owner");
+    }
+
+    [Fact]
     public async Task Sends_logprob_settings_and_merges_the_extra_body()
     {
         var (model, handler) = Model(Respond(HttpStatusCode.OK, Judged));
@@ -256,6 +268,14 @@ public sealed class IronHiveChatModelTests
         public List<string> Bodies { get; } = [];
 
         public List<string> Paths { get; } = [];
+
+        public bool Disposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
