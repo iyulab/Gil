@@ -1,0 +1,90 @@
+name: Publish
+
+# Publishes to NuGet.org when the version in Directory.Build.props changes on main.
+# Packing is switched on in Directory.Build.props (IsPackable); while it is off this workflow
+# builds and tests, finds no packages, and ends without publishing.
+
+on:
+  push:
+    branches: [main]
+    paths: [Directory.Build.props]
+  workflow_dispatch:
+
+permissions:
+  contents: write # the release tag
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Read the version
+        id: version
+        run: echo "version=$(dotnet msbuild src/Gil/Gil.csproj -getProperty:Version)" >> "$GITHUB_OUTPUT"
+
+      - run: dotnet restore Gil.slnx
+      - run: dotnet build Gil.slnx --no-restore --configuration Release
+      - run: dotnet test --solution Gil.slnx --no-build --configuration Release
+      - run: dotnet pack Gil.slnx --no-build --configuration Release --output packages
+
+      # Every project under src/ must produce a package of this version; none at all means packing is off.
+      - name: Check the packages
+        id: packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          shopt -s nullglob
+          produced=(packages/*.nupkg)
+          if [ ${#produced[@]} -eq 0 ]; then
+            echo "::notice::Packing is switched off (IsPackable is false), so nothing is published."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          missing=0
+          for csproj in $(grep -oP '(?<=Path=")src/[^"]+\.csproj' Gil.slnx); do
+            id=$(basename "$csproj" .csproj)
+            if [ ! -f "packages/${id}.${VERSION}.nupkg" ]; then
+              echo "::error::${id}.${VERSION}.nupkg was not produced"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      # Symbol packages (.snupkg) next to each package are pushed with it.
+      - name: Push to NuGet.org
+        if: steps.packages.outputs.publish == 'true'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push "packages/*.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      - name: Tag the release
+        if: steps.packages.outputs.publish == 'true'
+        env:
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "$TAG already exists."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
