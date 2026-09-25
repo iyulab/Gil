@@ -175,12 +175,13 @@ public sealed class PromotionTests : IDisposable
     [Fact]
     public void Proposes_what_the_reference_implementation_proposed_at_each_recorded_round()
     {
-        // Point GIL_COMPAT_PROMOTION at promotion rounds rebuilt from a recorded run: per round the tree, the evidence
-        // as it stood, the judgment energy and cost model, and what the other implementation proposed.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_PROMOTION");
+        // Promotion rounds rebuilt from a recorded run — the committed synthetic fixture, or a file GIL_COMPAT_PROMOTION
+        // points at: per round the tree, the evidence as it stood, the judgment energy and cost model, and what the other
+        // implementation proposed.
+        var path = Conformance.Fixture("GIL_COMPAT_PROMOTION", "promotion.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_PROMOTION is not set");
+            Assert.Skip("GIL_COMPAT_PROMOTION is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));

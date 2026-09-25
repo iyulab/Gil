@@ -64,7 +64,8 @@ public sealed class TaskStatsTests : IDisposable
     [Fact]
     public void Cost_per_request_is_a_trend_over_windows_and_can_be_priced_again_with_fitted_coefficients()
     {
-        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "c.sqlite"));
+        // Windows follow request order (time, then id); one fixed time keeps that order from depending on the wall clock.
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "c.sqlite"), clock: new FixedClock());
         for (var i = 0; i < 5; i++)
         {
             var id = $"t{i}";
