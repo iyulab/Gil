@@ -59,6 +59,30 @@ public sealed class ResolverTests
     }
 
     [Fact]
+    public async Task A_template_whose_blanks_stay_unfilled_falls_back_within_the_habit_category()
+    {
+        var rig = new Rig(Judgments(("work", 0.95), ("received", 0.95)), "not json", "still not json", "pto_request");
+
+        var result = await rig.Resolver.ResolveAsync(Task(FallbackScope.Path), "sent the form", "t", TestContext.Current.CancellationToken);
+
+        (result.Output, result.Mode).Should().Be(("pto_request", "partial"));
+        rig.Model.Requests.Should().HaveCount(3, "two filling attempts, then one fallback");
+        rig.Model.Requests[^1].Messages[^1].Content.Should().Contain("Work").And.NotContain("received");
+        result.Path.Should().HaveCount(2, "the recorded path still shows the habit the judgments chose");
+        result.Energy.Should().Be(2 + 2 + 3, "two judgments, then every call's energy");
+    }
+
+    [Fact]
+    public async Task A_template_whose_blanks_stay_unfilled_stays_empty_when_fallback_is_off()
+    {
+        var rig = new Rig(Judgments(("work", 0.95), ("received", 0.95)), "not json", "still not json");
+
+        var result = await rig.Resolver.ResolveAsync(Task(allowFallback: false), "sent the form", "t", TestContext.Current.CancellationToken);
+
+        (result.Output, result.Mode).Should().Be(((string?)null, "habit/template"));
+    }
+
+    [Fact]
     public async Task A_procedure_habit_is_generated_with_its_steps()
     {
         var rig = new Rig(Judgments(("work", 0.95), ("steps", 0.95)), "done");

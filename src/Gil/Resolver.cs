@@ -58,7 +58,19 @@ public sealed class Resolver(
         {
             (output, mode, var cost) = await FromHabitAsync(habit, state, traceId, cancellationToken).ConfigureAwait(false);
             energy += cost;
-            (explored, cost) = await ExploreAsync(task, habit, output, state, traceId, cancellationToken).ConfigureAwait(false);
+            if (output is null && habit.Kind == HabitKind.Template && task.Policy.AllowFallback)
+            {
+                // The blanks could not be filled: rather than leave the answer empty, generate within the habit's
+                // category — what the judgments confirmed before the one that chose the habit.
+                var categories = traversed.Confirmed.SkipLast(1).ToList();
+                mode = categories.Count > 0 ? "partial" : "fallback";
+                (output, cost) = await GenerateAsync(task, state, categories, traceId, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                (explored, cost) = await ExploreAsync(task, habit, output, state, traceId, cancellationToken).ConfigureAwait(false);
+            }
+
             energy += cost;
         }
         else if (!task.Policy.AllowFallback)
