@@ -123,6 +123,11 @@ public sealed class SingleTokenJudgeTests
             }
 
             distribution.LabelMass.Should().BeApproximately(recorded.GetProperty("label_mass").GetDouble(), 1e-9);
+            if (recorded.TryGetProperty("none_prob", out var noneProb))
+            {
+                distribution.Probs.GetValueOrDefault(none).Should().BeApproximately(noneProb.GetDouble(), 1e-9, recorded.GetProperty("trace_id").GetString());
+            }
+
             var outcome = distribution.Trusted && distribution.Choice != none ? "accept" : "exit";
             outcome.Should().Be(recorded.GetProperty("outcome").GetString());
             checkedCount++;

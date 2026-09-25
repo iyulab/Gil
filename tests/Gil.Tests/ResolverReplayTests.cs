@@ -83,6 +83,21 @@ public sealed class ResolverReplayTests : IDisposable
             (result.Mode, result.Output).Should().Be((@case.GetProperty("mode").GetString()!, @case.GetProperty("output").GetString()), traceId);
             result.Path.Select(s => (s.Node, s.Chosen, s.Outcome)).Should().Equal(
                 @case.GetProperty("steps").EnumerateArray().Select(s => { var step = Step(s); return (step.Node, step.Chosen, step.Outcome); }), traceId);
+            foreach (var (step, expected) in result.Path.Zip(@case.GetProperty("steps").EnumerateArray()))
+            {
+                if (expected.TryGetProperty("none_prob", out var noneProb))
+                {
+                    if (noneProb.ValueKind == JsonValueKind.Null)
+                    {
+                        step.NoneProb.Should().BeNull(traceId);
+                    }
+                    else
+                    {
+                        step.NoneProb.Should().BeApproximately(noneProb.GetDouble(), 1e-9, traceId);
+                    }
+                }
+            }
+
             model.Used.Should().Be(@case.GetProperty("fallback_outputs").GetArrayLength(), traceId);
             replayed++;
         }

@@ -106,11 +106,12 @@ public sealed class ShadowIndexTests : IDisposable
     [Fact]
     public void Builds_the_same_index_as_the_reference_implementation_from_the_same_log()
     {
-        // Point GIL_COMPAT_SHADOWS at recorded evidence with the index another implementation built after the first N rows.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_SHADOWS");
+        // Recorded evidence with the index another implementation built after the first N rows — the committed synthetic
+        // fixture, or a file GIL_COMPAT_SHADOWS points at.
+        var path = Conformance.Fixture("GIL_COMPAT_SHADOWS", "shadows.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_SHADOWS is not set");
+            Assert.Skip("GIL_COMPAT_SHADOWS is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
