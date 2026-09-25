@@ -19,6 +19,88 @@ The telemetry file layout is a contract: analysis tools read it directly, so col
 renamed or repurposed. `Writes_the_compatibility_fixture` produces a small synthetic store other
 implementations can open to check they read the same layout (set `GIL_COMPAT_FIXTURE` to choose where).
 
+## Usage
+
+A request goes through memory first, then the tree of one-token judgments, then a fallback narrowed to the
+category the tree confirmed, then the full fallback. Every model call is recorded and priced in the telemetry
+store, and feedback on an answer is what memory, habit statistics and promotion learn from.
+
+```csharp
+using System.Text.Json.Nodes;
+using Gil;
+using Gil.Fallback;
+using Gil.Habits;
+using Gil.Judge;
+using Gil.Llm;
+using Gil.Memory;
+using Gil.Ontology;
+using Gil.Telemetry;
+using Gil.Traverse;
+
+using var store = new SqliteTelemetryStore("gil.sqlite");
+using var chat = IronHiveChatModel.OpenAICompatible(new OpenAICompatibleOptions
+{
+    BaseUrl = new Uri("http://localhost:8080/"),
+    ApiKey = "",
+    Model = "my-model",
+});
+
+// Calls are priced in the unit you report (GPU milliseconds or dollars), with coefficients fitted for your server.
+var recorder = new CallRecorder(chat, new EnergyModel(Fixed: 120, PerFreshPromptToken: 0.7, PerCachedToken: 0, PerOutputToken: 15), store);
+
+using var embedder = new OpenAICompatibleEmbeddingModel(new OpenAICompatibleOptions
+{
+    BaseUrl = new Uri("http://localhost:8081/"),
+    ApiKey = "",
+    Model = "my-embedding-model",
+});
+var memory = new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store));
+
+// A server whose chat template reasons by default must be told not to, or a one-token judgment returns no label.
+var noThinking = new JsonObject { ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false } };
+
+var resolver = new Resolver(
+    new GreedyTraverser(new SingleTokenJudge(recorder, new SingleTokenJudgeOptions { ExtraBody = noThinking })),
+    new FallbackGenerator(recorder, extraBody: noThinking),
+    new SlotFiller(recorder),
+    sink: store,
+    memory: memory,
+    statistics: store,
+    shadowEvidence: store);
+
+var tree = OntologyYaml.Load("support.yaml").Root;
+var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new TaskPolicy
+{
+    // No defaults: a judgment's probability is not a calibrated accuracy, and the right threshold depends on the task.
+    Thresholds = new Thresholds(PerLayer: [0.7], Leaf: 0.9),
+    FallbackScope = FallbackScope.Path,
+    // Similarity scales differ between embedding models, so this has no default either; without it memory is off.
+    MemoryThreshold = 0.9,
+});
+
+var result = await resolver.ResolveAsync(task, "I lost my card");
+Console.WriteLine($"{result.Mode}: {result.Output}");
+await resolver.FeedbackAsync(task, result.TraceId, correct: true);
+```
+
+A task whose answers are free text may gain nothing from judgments; define it with a bare root (`id: root`) and
+it goes from memory straight to the fallback without a judgment call.
+
+Promotion never edits the tree by itself. Whoever operates the task runs a round, reviews the result against the
+authored YAML and applies what they accept:
+
+```csharp
+var proposer = new RepeatedOutputProposer(
+    new PromotionPolicy(MinSupport: 3),
+    store.JudgeEnergyByNode(task.Name),
+    JudgeCostModel.Fit(store.JudgeCostSamples(task.Name)));
+var review = Promotion.Review(tree, proposer.Propose(tree, store.PromotionCandidates(task.Name)));
+File.WriteAllText("support.proposed.yaml", review.After);
+```
+
+`Deactivation.Propose` and `Differentiation.Capacity` / `Differentiation.Anchored` produce the other two review
+lists: habits to retire, and nodes to split or categories to add.
+
 ## Build and test
 
 Requires the .NET 10 SDK.

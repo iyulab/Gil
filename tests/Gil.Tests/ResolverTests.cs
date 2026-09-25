@@ -258,6 +258,27 @@ public sealed class ResolverTests
     }
 
     [Fact]
+    public async Task A_task_without_a_tree_goes_from_memory_straight_to_the_full_fallback_without_a_judgment()
+    {
+        // Free-answer tasks can gain nothing from judgments (their fallback rarely writes the organisation's answer;
+        // accuracy comes from memory), so a task may be defined with a bare root: nothing to judge, nothing to pay.
+        var bare = OntologyYaml.Parse("id: root").Root;
+        var task = new TaskDefinition("support", new TextContract(), bare, new TaskPolicy { Thresholds = Strict, MemoryThreshold = 0.9 });
+        var rig = new Rig(Judgments(), "Your parcel ships tomorrow.");
+        rig.Memory.Items.Add(("refund please", "Refunds take five days.", 0.95));
+
+        var remembered = await rig.Resolver.ResolveAsync(task, "refund please", "t1", TestContext.Current.CancellationToken);
+        rig.Memory.Items.Clear();
+        rig.Memory.Items.Add(("refund please", "Refunds take five days.", 0.5));
+        var generated = await rig.Resolver.ResolveAsync(task, "where is my parcel", "t2", TestContext.Current.CancellationToken);
+
+        (remembered.Output, remembered.Mode).Should().Be(("Refunds take five days.", "memory"));
+        (generated.Output, generated.Mode).Should().Be(("Your parcel ships tomorrow.", "fallback"));
+        rig.Judge.Shown.Should().BeEmpty();
+        rig.Sink.Traces["t2"].Outcome!.Path.Should().ContainSingle().Which.Outcome.Should().Be("skip");
+    }
+
+    [Fact]
     public async Task A_known_answer_that_is_not_a_habit_is_shown_as_a_shadow_and_picking_it_defers_to_the_fallback()
     {
         // A request already answered "leave_balance" by the fallback under "work" and confirmed. The next one like it
