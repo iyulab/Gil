@@ -2,6 +2,7 @@ using System.Text.Json;
 using AwesomeAssertions;
 using Gil.Fallback;
 using Gil.Llm;
+using Gil.Memory;
 using Gil.Ontology;
 using Gil.Telemetry;
 using Gil.Traverse;
@@ -57,8 +58,21 @@ public sealed class ResolverReplayTests : IDisposable
             {
                 Thresholds = thresholds,
                 FallbackScope = fixture.GetProperty("fallback_scope").GetString() == "path" ? FallbackScope.Path : FallbackScope.Full,
+                MemoryThreshold = fixture.TryGetProperty("memory_threshold", out var threshold) ? threshold.GetDouble() : null,
             });
         var attempts = fixture.GetProperty("fallback_max_attempts").GetInt32();
+
+        // A run with memory carries the vectors its embedding model returned and the requests where memory failed; the
+        // memory itself (nearest neighbour, threshold, forgetting a wrong answer, demoting a failure to a miss) runs for real.
+        IMemory? memory = null;
+        if (fixture.TryGetProperty("vectors", out var vectors))
+        {
+            var byText = vectors.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.EnumerateArray().Select(v => v.GetSingle()).ToArray());
+            var failing = fixture.GetProperty("cases").EnumerateArray()
+                .Where(c => c.GetProperty("memory_fails").ValueKind == JsonValueKind.String)
+                .ToDictionary(c => c.GetProperty("trace_id").GetString()!, c => c.GetProperty("memory_fails").GetString()!);
+            memory = new FailingMemory(new EmbeddingMemory(new EmbeddingRecorder(new RecordedEmbeddingModel(byText), new EnergyModel(0, 0, 0, 0), store)), failing);
+        }
         var slotAttempts = fixture.TryGetProperty("slot_max_attempts", out var slots) ? slots.GetInt32() : 2;
 
         var replayed = 0;
@@ -72,6 +86,7 @@ public sealed class ResolverReplayTests : IDisposable
                 new FallbackGenerator(recorder, attempts),
                 new SlotFiller(recorder, slotAttempts),
                 store,
+                memory,
                 statistics: store);
 
             // A request that was interrupted and tried again had its dead attempt's visits counted too.
@@ -96,6 +111,26 @@ public sealed class ResolverReplayTests : IDisposable
                         step.NoneProb.Should().BeApproximately(noneProb.GetDouble(), 1e-9, traceId);
                     }
                 }
+            }
+
+            if (@case.TryGetProperty("recall", out var recall))
+            {
+                result.Recall.Should().NotBeNull(traceId);
+                result.Recall!.Hit.Should().Be(recall.GetProperty("hit").GetBoolean(), traceId);
+                if (recall.TryGetProperty("error", out _))
+                {
+                    result.Recall.Error.Should().NotBeNull(traceId);
+                }
+                else
+                {
+                    result.Recall.Error.Should().BeNull(traceId);
+                    result.Recall.Source.Should().Be(recall.GetProperty("source").GetString(), traceId);
+                    result.Recall.Similarity!.Value.Should().BeApproximately(recall.GetProperty("similarity").GetDouble(), 1e-5, traceId);
+                }
+            }
+            else
+            {
+                result.Recall.Should().BeNull(traceId);
             }
 
             model.Used.Should().Be(@case.GetProperty("fallback_outputs").GetArrayLength(), traceId);
@@ -140,6 +175,28 @@ public sealed class ResolverReplayTests : IDisposable
             count.Parameters.AddWithValue("$scope", name);
             ((long)count.ExecuteScalar()!).Should().Be(stats.GetProperty(table).GetArrayLength(), table);
         }
+    }
+
+    private sealed class RecordedEmbeddingModel(IReadOnlyDictionary<string, float[]> vectors) : IEmbeddingModel
+    {
+        public Task<EmbeddingResult> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new EmbeddingResult([.. texts.Select(t => vectors[t])], "replay", 1, 1, "{}"));
+    }
+
+    /// <summary>Fails a lookup or a write for the requests the recorded run failed them for.</summary>
+    private sealed class FailingMemory(IMemory inner, IReadOnlyDictionary<string, string> failing) : IMemory
+    {
+        public Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default) =>
+            failing.GetValueOrDefault(traceId) == "lookup"
+                ? throw new HttpRequestException("memory unavailable")
+                : inner.LookupAsync(task, state, traceId, cancellationToken);
+
+        public Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default) =>
+            failing.GetValueOrDefault(traceId) == "remember"
+                ? throw new HttpRequestException("memory unavailable")
+                : inner.RememberAsync(task, traceId, state, answer, cancellationToken);
+
+        public void Forget(string task, string traceId) => inner.Forget(task, traceId);
     }
 
     private static PathStep Step(JsonElement s) =>

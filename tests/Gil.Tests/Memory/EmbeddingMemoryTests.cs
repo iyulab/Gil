@@ -68,6 +68,18 @@ public sealed class EmbeddingMemoryTests
     }
 
     [Fact]
+    public async Task A_tie_goes_to_the_request_remembered_first_even_after_a_forget()
+    {
+        var memory = new EmbeddingMemory(new EmbeddingRecorder(new Vectors(Refund), new EnergyModel(0, 0, 0, 0)));
+        memory.Seed("task", [("other", Other, "x"), ("first", Refund, "a"), ("later", Refund, "b")]);
+
+        memory.Forget("task", "other");
+        var (match, _) = await memory.LookupAsync("task", "q", "t", TestContext.Current.CancellationToken);
+
+        match!.Source.Should().Be("first");
+    }
+
+    [Fact]
     public async Task Rebuilding_keeps_confirmed_answers_and_drops_overturned_ones_even_when_they_were_seeds()
     {
         var memory = new EmbeddingMemory(new EmbeddingRecorder(new Vectors(RefundNear), new EnergyModel(0, 0, 0, 0)));

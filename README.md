@@ -19,6 +19,11 @@ The telemetry file layout is a contract: analysis tools read it directly, so col
 renamed or repurposed. `Writes_the_compatibility_fixture` produces a small synthetic store other
 implementations can open to check they read the same layout (set `GIL_COMPAT_FIXTURE` to choose where).
 
+The same contract is checked the other way on every build: judgments, traversal, prompts, the resolver (with and
+without memory, including memory failures), shadows, promotion, deactivation, differentiation and tree files are
+replayed from synthetic fixtures under `tests/fixtures/conformance`, which the reference implementation produced from a
+made-up support task and a deterministic model. Set the matching `GIL_COMPAT_*` variable to replay a recorded run instead.
+
 ## Usage
 
 A request goes through memory first, then the tree of one-token judgments, then a fallback narrowed to the

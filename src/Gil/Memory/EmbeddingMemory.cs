@@ -174,6 +174,7 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
             }
         }
 
+        /// <summary>The most similar row; on a tie, the one remembered first (rows stay in the order they were remembered).</summary>
         public (string Key, double Similarity, string Answer) Nearest(float[] query)
         {
             var best = 0;
