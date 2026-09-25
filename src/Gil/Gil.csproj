@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>Gil</RootNamespace>
-    <Description>The Gil habit runtime.</Description>
+    <Description>A habit runtime for LLM decisions: answers repeated requests from memory or from a small tree of one-token judgments, and generates only what the tree cannot settle, narrowed to the category it confirmed.</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Gil.Abstractions\Gil.Abstractions.csproj" />

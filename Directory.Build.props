@@ -12,14 +12,30 @@
     <Authors>iyulab</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/iyulab/Gil</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/iyulab/Gil</PackageProjectUrl>
+    <PackageTags>llm;routing;classification;cache;fallback;habits</PackageTags>
+  </PropertyGroup>
+
+  <!-- Reproducible packages: set by CI, never locally, so local builds keep full paths for debugging. -->
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Gil')) And !$(MSBuildProjectName.EndsWith('.Tests'))">
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <ItemGroup Condition="$(MSBuildProjectName.StartsWith('Gil')) And !$(MSBuildProjectName.EndsWith('.Tests'))">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
     <IsTestProject>true</IsTestProject>
+    <!-- Stays unpackaged even when packing is switched on for the whole solution. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 </Project>
