@@ -79,11 +79,11 @@ public sealed class FallbackGeneratorTests
     [Fact]
     public async Task Prompts_match_the_wording_another_implementation_was_measured_with()
     {
-        // Point GIL_COMPAT_PROMPTS at a file of prompts another implementation rendered for fixed inputs.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_PROMPTS");
+        // Prompts another implementation rendered for fixed inputs: the committed synthetic fixture, or GIL_COMPAT_PROMPTS.
+        var path = Conformance.Fixture("GIL_COMPAT_PROMPTS", "prompts.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_PROMPTS is not set");
+            Assert.Skip("GIL_COMPAT_PROMPTS is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));

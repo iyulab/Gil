@@ -1,0 +1,2 @@
+# Conformance fixtures are compared byte for byte with what the reference implementation writes.
+tests/fixtures/conformance/*.json -text

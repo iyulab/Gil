@@ -96,12 +96,12 @@ public sealed class GreedyTraverserTests
     [Fact]
     public async Task Recorded_judgments_give_the_same_paths_as_another_implementation()
     {
-        // Point GIL_COMPAT_TRAVERSE at a file of recorded judgments per request and node, with the paths another
-        // implementation's traverser produced from them under several thresholds.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_TRAVERSE");
+        // Recorded judgments per request and node, with the paths another implementation's traverser produced from them
+        // under several thresholds — the committed synthetic fixture, or a file GIL_COMPAT_TRAVERSE points at.
+        var path = Conformance.Fixture("GIL_COMPAT_TRAVERSE", "traverse.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_TRAVERSE is not set");
+            Assert.Skip("GIL_COMPAT_TRAVERSE is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));

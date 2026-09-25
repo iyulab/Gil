@@ -93,12 +93,13 @@ public sealed class SingleTokenJudgeTests
     [Fact]
     public void Recorded_judgments_from_another_implementation_give_the_same_distribution_and_outcome()
     {
-        // Point GIL_COMPAT_JUDGE at a JSON file of recorded judge calls (shown candidates, first-token log-probabilities,
-        // and the distribution and outcome that implementation derived) to check this one derives the same.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_JUDGE");
+        // Recorded judge calls (shown candidates, first-token log-probabilities, and the distribution and outcome another
+        // implementation derived) — the committed synthetic fixture, or a file GIL_COMPAT_JUDGE points at — to check this
+        // one derives the same.
+        var path = Conformance.Fixture("GIL_COMPAT_JUDGE", "judge.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_JUDGE is not set");
+            Assert.Skip("GIL_COMPAT_JUDGE is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
