@@ -123,7 +123,8 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         _connection = new SqliteConnection(source.ToString());
         _connection.Open();
         Execute("PRAGMA journal_mode=WAL");
-        Execute(Schema);
+        // The stored schema text must not depend on how this file was checked out: other tools compare the files.
+        Execute(Schema.ReplaceLineEndings("\n"));
         if (restricted)
         {
             Execute("INSERT OR REPLACE INTO store_meta (key, value) VALUES ('restricted', '1')");
