@@ -20,6 +20,10 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # Keeps first-run notices out of the output the version step captures.
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
     steps:
       - uses: actions/checkout@v4
 
@@ -33,11 +37,12 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('Directory.Packages.props') }}
           restore-keys: ${{ runner.os }}-nuget-
 
+      - run: dotnet restore Gil.slnx
+
       - name: Read the version
         id: version
         run: echo "version=$(dotnet msbuild src/Gil/Gil.csproj -getProperty:Version)" >> "$GITHUB_OUTPUT"
 
-      - run: dotnet restore Gil.slnx
       - run: dotnet build Gil.slnx --no-restore --configuration Release
       - run: dotnet test --solution Gil.slnx --no-build --configuration Release
       - run: dotnet pack Gil.slnx --no-build --configuration Release --output packages
