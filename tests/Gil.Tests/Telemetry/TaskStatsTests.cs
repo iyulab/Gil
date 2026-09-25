@@ -37,16 +37,18 @@ public sealed class TaskStatsTests : IDisposable
         Request("fallback", "wrong");
         Request("fallback", "wrong");
         Request("fallback", "wrong");
+        store.OpenTrace("down", "support", "s");
+        store.CloseTrace("down", new TraceOutcome { Mode = "partial", Energy = 1, Recall = Recall.Failed(0.9, new TimeoutException("slow")) });
         store.OpenTrace("open", "support", "not closed yet");
         store.OpenTrace("elsewhere", "other", "s");
         store.CloseTrace("elsewhere", new TraceOutcome { Mode = "memory", Energy = 1 });
 
         var stats = store.Stats("support");
 
-        (stats.Requests, stats.Judged).Should().Be((16, 14));
-        stats.HabitRate.Should().BeApproximately(11 / 16.0, 1e-12);
-        stats.MemoryRate.Should().BeApproximately(2 / 16.0, 1e-12);
-        stats.Modes.Select(m => m.Mode).Should().Equal("habit/answer", "fallback", "memory", "habit/template");
+        (stats.Requests, stats.Judged, stats.MemoryFailures).Should().Be((17, 14, 1));
+        stats.HabitRate.Should().BeApproximately(11 / 17.0, 1e-12);
+        stats.MemoryRate.Should().BeApproximately(2 / 17.0, 1e-12);
+        stats.Modes.Select(m => m.Mode).Should().Equal("habit/answer", "fallback", "memory", "habit/template", "partial");
         var habit = stats.Modes[0];
         (habit.Requests, habit.Judged, habit.Correct, habit.Accuracy).Should().Be((10, 10, 8, 0.8));
         habit.Low!.Value.Should().BeApproximately(0.490162, 1e-6);
@@ -56,6 +58,7 @@ public sealed class TaskStatsTests : IDisposable
         fallback.Low!.Value.Should().BeApproximately(0, 1e-12);
         fallback.High!.Value.Should().BeApproximately(0.561497, 1e-6);
         stats.Modes[3].Should().Be(new ModeStats("habit/template", 1, 0, 0, null, null, null));
+        store.Stats("other").MemoryFailures.Should().Be(0);
     }
 
     [Fact]

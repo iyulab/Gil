@@ -10,6 +10,8 @@ namespace Gil;
 /// <param name="Modes">Per mode, most frequent first.</param>
 /// <param name="HabitRate">Share of requests a habit answered (any <c>habit/</c> mode).</param>
 /// <param name="MemoryRate">Share of requests memory answered.</param>
+/// <param name="MemoryFailures">Requests whose memory lookup failed and went on as a miss — an operational alarm:
+/// while memory is down, every request pays for the tree.</param>
 /// <param name="Cost">Mean cost per request in consecutive windows, oldest first — the trend.</param>
 public sealed record TaskStats(
     string Task,
@@ -18,6 +20,7 @@ public sealed record TaskStats(
     IReadOnlyList<ModeStats> Modes,
     double HabitRate,
     double MemoryRate,
+    int MemoryFailures,
     IReadOnlyList<CostWindow> Cost);
 
 /// <summary>One mode's requests and its observed accuracy with a 95% Wilson interval; null accuracy without verdicts.</summary>

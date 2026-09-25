@@ -330,14 +330,17 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         ArgumentOutOfRangeException.ThrowIfLessThan(window, 1);
         var repriced = pricing is null ? null : Repriced(task, pricing);
         using var command = Command(
-            "SELECT trace_id, mode, feedback_verdict, energy FROM traces WHERE task = $task AND mode IS NOT NULL ORDER BY created_at, trace_id",
+"SELECT trace_id, mode, feedback_verdict, energy, json_extract(recall, '$.error') IS NOT NULL FROM traces "
+            + "WHERE task = $task AND mode IS NOT NULL ORDER BY created_at, trace_id",
             [("$task", task)]);
         using var reader = command.ExecuteReader();
         var rows = new List<(string Mode, string? Verdict, double Cost)>();
+        var memoryFailures = 0;
         while (reader.Read())
         {
             var cost = repriced is null ? (reader.IsDBNull(3) ? 0 : reader.GetDouble(3)) : repriced.GetValueOrDefault(reader.GetString(0));
             rows.Add((reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), cost));
+            memoryFailures += reader.GetBoolean(4) ? 1 : 0;
         }
 
         var modes = rows
@@ -361,6 +364,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             modes,
             total == 0 ? 0 : (double)rows.Count(r => r.Mode.StartsWith("habit/", StringComparison.Ordinal)) / total,
             total == 0 ? 0 : (double)rows.Count(r => r.Mode == "memory") / total,
+            memoryFailures,
             windows);
     }
 

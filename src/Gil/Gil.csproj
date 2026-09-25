@@ -9,7 +9,6 @@
   <ItemGroup>
     <PackageReference Include="IronHive.Providers.OpenAI.Compatible" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
   <ItemGroup>
