@@ -144,13 +144,14 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IDi
         ArgumentNullException.ThrowIfNull(outcome);
         Execute(
             "UPDATE traces SET mode = $mode, output = $output, confidence = $confidence, energy = $energy, "
-                + "path = $path, recall = $recall WHERE trace_id = $id",
+                + "path = $path, recall = $recall, explored_output = $explored WHERE trace_id = $id",
             ("$mode", outcome.Mode),
             ("$output", outcome.Output),
             ("$confidence", outcome.Confidence),
             ("$energy", outcome.Energy),
             ("$path", JsonSerializer.Serialize(outcome.Path, Json)),
             ("$recall", outcome.Recall is null ? null : JsonSerializer.Serialize(outcome.Recall, Json)),
+            ("$explored", outcome.ExploredOutput),
             ("$id", traceId));
     }
 

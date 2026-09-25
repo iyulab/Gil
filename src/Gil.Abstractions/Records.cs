@@ -90,4 +90,7 @@ public sealed record TraceOutcome
     public required double Energy { get; init; }
     public IReadOnlyList<PathStep> Path { get; init; } = [];
     public Recall? Recall { get; init; }
+
+    /// <summary>The cross-check fallback's output when the request was explored (<see cref="TaskPolicy.ExplorationRate"/>); null otherwise.</summary>
+    public string? ExploredOutput { get; init; }
 }

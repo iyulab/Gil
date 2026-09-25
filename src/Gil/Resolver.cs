@@ -15,8 +15,11 @@ public sealed class Resolver(
     SlotFiller slots,
     ITelemetrySink? sink = null,
     IMemory? memory = null,
-    IHabitStatistics? statistics = null)
+    IHabitStatistics? statistics = null,
+    Random? random = null)
 {
+    private readonly Random _random = random ?? Random.Shared;
+
     public async Task<Resolution> ResolveAsync(TaskDefinition task, string state, string? traceId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(task);
@@ -46,9 +49,12 @@ public sealed class Resolver(
         var confidence = traversed.Path.Count > 0 ? traversed.Path[^1].P : 0;
         string? output;
         string mode;
+        string? explored = null;
         if (traversed.Habit is Habit habit)
         {
             (output, mode, var cost) = await FromHabitAsync(habit, state, traceId, cancellationToken).ConfigureAwait(false);
+            energy += cost;
+            (explored, cost) = await ExploreAsync(task, habit, output, state, traceId, cancellationToken).ConfigureAwait(false);
             energy += cost;
         }
         else if (!task.Policy.AllowFallback)
@@ -64,7 +70,7 @@ public sealed class Resolver(
             energy += cost;
         }
 
-        return Close(task, new Resolution(output, mode, traversed.Path, confidence, energy, traceId, recall));
+        return Close(task, new Resolution(output, mode, traversed.Path, confidence, energy, traceId, recall), explored);
     }
 
     /// <summary>
@@ -122,6 +128,28 @@ public sealed class Resolver(
         }
     }
 
+    /// <summary>
+    /// The exploration cross-check (<see cref="TaskPolicy.ExplorationRate"/>): a share of accepted answer habits is
+    /// also solved by the full fallback, without the path as context, so the whole answer — the judgments above
+    /// included — is checked independently. Only answer habits: a template's or a procedure's output cannot be compared
+    /// to the fallback's character for character. The draw is taken only when it can matter, so a task that never
+    /// explores consumes no randomness.
+    /// </summary>
+    private async Task<(string? Output, double Energy)> ExploreAsync(
+        TaskDefinition task, Habit habit, string? output, string state, string traceId, CancellationToken cancellationToken)
+    {
+        var rate = task.Policy.ExplorationRate;
+        if (habit.Kind != HabitKind.Answer || rate <= 0 || _random.NextDouble() >= rate)
+        {
+            return (null, 0);
+        }
+
+        var check = await fallback.GenerateAsync(state, task.Contract, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var agreed = check.Output is not null && output is not null && check.Output.Trim() == output.Trim();
+        statistics?.RecordOutcome(task.Name, habit.Id, new HabitCounts(Explored: 1, Disputed: agreed ? 0 : 1));
+        return (check.Output?.Trim(), check.Energy);
+    }
+
     private async Task<(string? Output, string Mode, double Energy)> FromHabitAsync(Habit habit, string state, string traceId, CancellationToken cancellationToken)
     {
         switch (habit.Kind)
@@ -163,7 +191,7 @@ public sealed class Resolver(
         return (full.Output, narrow.Energy + full.Energy);
     }
 
-    private Resolution Close(TaskDefinition task, Resolution resolution)
+    private Resolution Close(TaskDefinition task, Resolution resolution, string? explored = null)
     {
         // Visits are counted per task: the same ids recur across tasks sharing a store.
         if (resolution.Path.Count > 0)
@@ -179,6 +207,7 @@ public sealed class Resolver(
             Energy = resolution.Energy,
             Path = resolution.Path,
             Recall = resolution.Recall,
+            ExploredOutput = explored,
         });
         return resolution;
     }

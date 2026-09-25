@@ -51,6 +51,14 @@ public sealed record TaskPolicy
     /// between embedding models. Null skips the memory stage and never updates memory.
     /// </summary>
     public double? MemoryThreshold { get; init; }
+
+    /// <summary>
+    /// Share of accepted answer habits that are also solved by the full fallback, as an independent cross-check. A
+    /// reinforced habit gets picked more and so loses chances to be checked; this keeps checking it without human
+    /// feedback. A disagreement is recorded as evidence about the pair, never as a penalty — the fallback errs too.
+    /// Zero turns it off.
+    /// </summary>
+    public double ExplorationRate { get; init; }
 }
 
 /// <summary>A task: its output contract, its decision tree and its policy.</summary>

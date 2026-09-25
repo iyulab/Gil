@@ -217,14 +217,70 @@ public sealed class ResolverTests
         rig.Statistics.Outcomes.Should().BeEmpty();
     }
 
-    private static TaskDefinition Task(FallbackScope scope = FallbackScope.Full, bool allowFallback = true, double? memoryThreshold = null) =>
-        new("support", new TreeAnswerContract(Tree), Tree, new TaskPolicy { Thresholds = Strict, FallbackScope = scope, AllowFallback = allowFallback, MemoryThreshold = memoryThreshold });
+    [Fact]
+    public async Task An_explored_habit_is_cross_checked_by_the_full_fallback_without_the_path()
+    {
+        var rig = new Rig(Judgments(("work", 0.95), ("pto", 0.95)), new FixedRandom(0.1), "pto_request");
+        var task = Task(explorationRate: 0.2);
+
+        var result = await rig.Resolver.ResolveAsync(task, "I need Friday off", "t", TestContext.Current.CancellationToken);
+
+        (result.Output, result.Mode).Should().Be(("pto_request", "habit/answer"));  // the habit still answers
+        rig.Model.Requests.Single().Messages[^1].Content.Should().NotContain("Work");  // no path context
+        rig.Sink.Traces["t"].Outcome!.ExploredOutput.Should().Be("pto_request");
+        rig.Statistics.Outcomes.Should().Equal(("support", "pto", new HabitCounts(Explored: 1)));
+    }
+
+    [Fact]
+    public async Task A_disagreeing_cross_check_is_recorded_as_disputed_not_penalized()
+    {
+        var rig = new Rig(Judgments(("work", 0.95), ("pto", 0.95)), new FixedRandom(0.1), "book_flight");
+
+        await rig.Resolver.ResolveAsync(Task(explorationRate: 0.2), "I need Friday off", "t", TestContext.Current.CancellationToken);
+
+        rig.Sink.Traces["t"].Outcome!.ExploredOutput.Should().Be("book_flight");
+        rig.Statistics.Outcomes.Should().Equal(("support", "pto", new HabitCounts(Explored: 1, Disputed: 1)));
+    }
+
+    [Theory]
+    [InlineData(0.0, 0.0)]  // exploration off: no draw decides anything
+    [InlineData(0.2, 0.5)]  // the draw falls outside the rate
+    public async Task Unexplored_habits_make_no_extra_call(double rate, double draw)
+    {
+        var rig = new Rig(Judgments(("work", 0.95), ("pto", 0.95)), new FixedRandom(draw));
+
+        await rig.Resolver.ResolveAsync(Task(explorationRate: rate), "I need Friday off", "t", TestContext.Current.CancellationToken);
+
+        rig.Model.Requests.Should().BeEmpty();
+        rig.Sink.Traces["t"].Outcome!.ExploredOutput.Should().BeNull();
+        rig.Statistics.Outcomes.Should().BeEmpty();
+    }
+
+    private static TaskDefinition Task(FallbackScope scope = FallbackScope.Full, bool allowFallback = true, double? memoryThreshold = null, double explorationRate = 0) =>
+        new("support", new TreeAnswerContract(Tree), Tree, new TaskPolicy
+        {
+            Thresholds = Strict,
+            FallbackScope = scope,
+            AllowFallback = allowFallback,
+            MemoryThreshold = memoryThreshold,
+            ExplorationRate = explorationRate,
+        });
+
+    private sealed class FixedRandom(double value) : Random
+    {
+        public override double NextDouble() => value;
+    }
 
     private static (string? Choice, double Confidence)[] Judgments(params (string? Choice, double Confidence)[] script) => script;
 
     private sealed class Rig
     {
         public Rig((string? Choice, double Confidence)[] judgments, params string[] answers)
+            : this(judgments, null, answers)
+        {
+        }
+
+        public Rig((string? Choice, double Confidence)[] judgments, Random? random, params string[] answers)
         {
             Model = new ScriptedModel(answers);
             var recorder = new CallRecorder(Model, new EnergyModel(1, 0, 0, 0), Sink);
@@ -234,7 +290,8 @@ public sealed class ResolverTests
                 new SlotFiller(recorder),
                 Sink,
                 Memory,
-                Statistics);
+                Statistics,
+                random);
         }
 
         public RecordingStatistics Statistics { get; } = new();
