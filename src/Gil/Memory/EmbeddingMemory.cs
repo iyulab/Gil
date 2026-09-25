@@ -77,7 +77,7 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
     public async Task<int> RebuildAsync(string task, IReadOnlyList<FeedbackEntry> history, string traceId, bool clear = true, int batch = 64, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(history);
-        var overturned = history.Where(e => e.Mode == "memory" && e.Verdict == "wrong" && e.Recall is not null).Select(e => e.Recall!.Source).ToHashSet();
+        var overturned = history.Where(e => e.Mode == "memory" && e.Verdict == "wrong" && e.Recall is not null).Select(e => e.Recall!.Source).OfType<string>().ToHashSet();
         var confirmed = history
             .Select(e => (e.TraceId, e.State, Answer: e.Verdict == "correct" ? e.Output : e.Correction))
             .Where(e => !string.IsNullOrEmpty(e.Answer) && !overturned.Contains(e.TraceId))

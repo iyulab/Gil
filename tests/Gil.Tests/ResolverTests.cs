@@ -179,6 +179,59 @@ public sealed class ResolverTests
     }
 
     [Fact]
+    public async Task A_failing_memory_is_a_miss_whose_error_is_kept_in_the_trace()
+    {
+        var rig = new Rig(Judgments(("travel", 0.95), ("book", 0.95)));
+        rig.Memory.Failure = new HttpRequestException("connection refused");
+
+        var result = await rig.Resolver.ResolveAsync(Task(memoryThreshold: 0.9), "fly me", "t", TestContext.Current.CancellationToken);
+
+        (result.Output, result.Mode).Should().Be(("book_flight", "habit/answer"));
+        result.Recall.Should().Be(new Recall(null, null, 0.9, Hit: false, "HttpRequestException: connection refused"));
+        rig.Sink.Traces["t"].Outcome!.Recall.Should().Be(result.Recall);
+    }
+
+    [Fact]
+    public async Task A_failing_memory_write_does_not_lose_the_verdict()
+    {
+        var rig = new Rig(Judgments(("travel", 0.95), ("book", 0.95)));
+        var task = Task(memoryThreshold: 0.9);
+        await rig.Resolver.ResolveAsync(task, "fly me", "t", TestContext.Current.CancellationToken);
+        rig.Memory.Failure = new HttpRequestException("connection refused");
+
+        await rig.Resolver.FeedbackAsync(task, "t", correct: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        rig.Sink.Traces["t"].Verdict.Should().Be("correct");
+    }
+
+    [Fact]
+    public async Task A_task_can_choose_to_see_memory_failures()
+    {
+        var rig = new Rig(Judgments(("travel", 0.95), ("book", 0.95)));
+        rig.Memory.Failure = new HttpRequestException("connection refused");
+        var task = Task(memoryThreshold: 0.9);
+        task = task with { Policy = task.Policy with { MemoryFailure = MemoryFailure.Throw } };
+
+        var resolve = () => rig.Resolver.ResolveAsync(task, "fly me", "t", TestContext.Current.CancellationToken);
+
+        await resolve.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task A_cancelled_lookup_is_never_taken_for_a_miss()
+    {
+        var rig = new Rig(Judgments(("travel", 0.95), ("book", 0.95)));
+        using var cancel = new CancellationTokenSource();
+        await cancel.CancelAsync();
+        rig.Memory.Failure = new OperationCanceledException(cancel.Token);
+
+        var resolve = () => rig.Resolver.ResolveAsync(Task(memoryThreshold: 0.9), "fly me", "t", cancel.Token);
+
+        await resolve.Should().ThrowAsync<OperationCanceledException>();
+        rig.Judge.Shown.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Without_a_threshold_memory_is_neither_consulted_nor_updated()
     {
         var rig = new Rig(Judgments(("travel", 0.95), ("book", 0.95)));
@@ -459,14 +512,26 @@ public sealed class ResolverTests
 
         public List<(string TraceId, string State, string Answer)> Remembered { get; } = [];
 
+        public Exception? Failure { get; set; }
+
         public Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default)
         {
+            if (Failure is not null)
+            {
+                throw Failure;
+            }
+
             var best = Items.OrderByDescending(i => i.Similarity).Select(i => new MemoryMatch(i.Source, i.Similarity, i.Answer)).FirstOrDefault();
             return System.Threading.Tasks.Task.FromResult((best, 0.5));
         }
 
         public Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default)
         {
+            if (Failure is not null)
+            {
+                throw Failure;
+            }
+
             Remembered.Add((traceId, state, answer));
             return System.Threading.Tasks.Task.FromResult(0.0);
         }

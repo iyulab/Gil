@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Gil;
 
 /// <summary>One of the top alternatives the model reported at the first generated token.</summary>
@@ -74,8 +76,29 @@ public sealed record PathStep(
     IReadOnlyDictionary<string, double> Probs,
     double Energy);
 
-/// <summary>The nearest remembered request, kept even on a miss so the threshold can be re-chosen offline.</summary>
-public sealed record Recall(string Source, double Similarity, double Threshold, bool Hit);
+/// <summary>
+/// The memory lookup of a request: the nearest remembered request, kept even on a miss so the threshold can be
+/// re-chosen offline — or, when the lookup failed and the policy treated the failure as a miss, the error instead.
+/// </summary>
+/// <param name="Source">The request that confirmed the nearest answer; null when the lookup failed.</param>
+/// <param name="Similarity">Similarity to it; null when the lookup failed.</param>
+/// <param name="Threshold">The task's memory threshold at the time.</param>
+/// <param name="Hit">Whether the remembered answer was returned.</param>
+/// <param name="Error">Why the lookup failed (exception type and message); null when it succeeded.</param>
+public sealed record Recall(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Source,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Similarity,
+    double Threshold,
+    bool Hit,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null)
+{
+    /// <summary>A lookup that failed and was treated as a miss.</summary>
+    public static Recall Failed(double threshold, Exception error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+        return new Recall(null, null, threshold, false, $"{error.GetType().Name}: {error.Message}");
+    }
+}
 
 /// <summary>How a request was finally closed.</summary>
 public sealed record TraceOutcome

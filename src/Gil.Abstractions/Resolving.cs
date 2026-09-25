@@ -30,6 +30,16 @@ public sealed record Thresholds(IReadOnlyList<double> PerLayer, double Leaf)
     }
 }
 
+/// <summary>What a failing memory does; see <see cref="TaskPolicy.MemoryFailure"/>.</summary>
+public enum MemoryFailure
+{
+    /// <summary>Treat the failure as a miss and record it.</summary>
+    Miss,
+
+    /// <summary>Propagate the exception.</summary>
+    Throw,
+}
+
 /// <summary>How a task resolves requests.</summary>
 public sealed record TaskPolicy
 {
@@ -51,6 +61,14 @@ public sealed record TaskPolicy
     /// between embedding models. Null skips the memory stage and never updates memory.
     /// </summary>
     public double? MemoryThreshold { get; init; }
+
+    /// <summary>
+    /// What a failing memory does. Memory is an optional cache in front of the tree, so by default a failed lookup is
+    /// a miss — the request goes on to the tree and the error is kept in the trace's <see cref="Recall"/> — and a
+    /// failed write after feedback is dropped: the verdict is already recorded, and rebuilding memory from the
+    /// feedback history restores the answer. <see cref="MemoryFailure.Throw"/> propagates both instead.
+    /// </summary>
+    public MemoryFailure MemoryFailure { get; init; } = MemoryFailure.Miss;
 
     /// <summary>
     /// Share of accepted answer habits that are also solved by the full fallback, as an independent cross-check. A

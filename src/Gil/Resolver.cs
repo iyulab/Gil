@@ -32,8 +32,17 @@ public sealed class Resolver(
         var energy = 0.0;
         if (memory is not null && task.Policy.MemoryThreshold is double threshold)
         {
-            var (match, cost) = await memory.LookupAsync(task.Name, state, traceId, cancellationToken).ConfigureAwait(false);
-            energy += cost;
+            MemoryMatch? match = null;
+            try
+            {
+                (match, var cost) = await memory.LookupAsync(task.Name, state, traceId, cancellationToken).ConfigureAwait(false);
+                energy += cost;
+            }
+            catch (Exception error) when (IsDegradable(task, error, cancellationToken))
+            {
+                recall = Recall.Failed(threshold, error);
+            }
+
             if (match is not null)
             {
                 recall = new Recall(match.Source, match.Similarity, threshold, match.Similarity >= threshold);
@@ -132,17 +141,28 @@ public sealed class Resolver(
             return;
         }
 
-        if (!correct && trace.Mode == "memory" && trace.Recall is not null)
+        if (!correct && trace.Mode == "memory" && trace.Recall?.Source is string source)
         {
-            memory.Forget(task.Name, trace.Recall.Source);
+            memory.Forget(task.Name, source);
         }
 
         var answer = correct ? trace.Output : correction;
         if (!string.IsNullOrEmpty(answer))
         {
-            await memory.RememberAsync(task.Name, traceId, trace.State, answer, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await memory.RememberAsync(task.Name, traceId, trace.State, answer, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (IsDegradable(task, error, cancellationToken))
+            {
+                // The verdict is recorded above; rebuilding memory from the feedback history restores this answer.
+            }
         }
     }
+
+    /// <summary>A memory failure the task treats as a miss — never a cancellation the caller asked for.</summary>
+    private static bool IsDegradable(TaskDefinition task, Exception error, CancellationToken cancellationToken) =>
+        task.Policy.MemoryFailure == MemoryFailure.Miss && !(error is OperationCanceledException && cancellationToken.IsCancellationRequested);
 
     /// <summary>
     /// The exploration cross-check (<see cref="TaskPolicy.ExplorationRate"/>): a share of accepted answer habits is
