@@ -113,6 +113,14 @@ published prices instead):
 var fitted = EnergyModel.Fit(store.ServerTimeSamples("my-model"));
 ```
 
+Accuracy is reported, not promised. `Stats` reads it off the log — per mode, on the requests that got feedback, with a
+95% interval — together with the share of requests habits and memory answered and the cost per request over time
+(priced again with the fitted coefficients, so early and late requests compare in one unit):
+
+```csharp
+var stats = store.Stats(task.Name, window: 100, pricing: fitted);
+```
+
 ## Build and test
 
 Requires the .NET 10 SDK.

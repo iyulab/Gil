@@ -74,5 +74,7 @@ internal static class ReadmeExample
         File.WriteAllText("support.proposed.yaml", review.After);
 
         var fitted = EnergyModel.Fit(store.ServerTimeSamples("my-model"));
+
+        var stats = store.Stats(task.Name, window: 100, pricing: fitted);
     }
 }

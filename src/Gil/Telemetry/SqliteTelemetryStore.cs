@@ -318,6 +318,83 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         return samples;
     }
 
+    /// <summary>
+    /// The task's observed accuracy per mode, habit and memory rates, and cost per request in windows of
+    /// <paramref name="window"/> requests. Costs are the energy recorded with each request; pass
+    /// <paramref name="pricing"/> to price every chat call again from its tokens instead — after fitting new
+    /// coefficients, so that old and new requests are compared in the same unit. Embedding calls keep their recorded
+    /// energy either way.
+    /// </summary>
+    public TaskStats Stats(string task, int window = 100, EnergyModel? pricing = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(window, 1);
+        var repriced = pricing is null ? null : Repriced(task, pricing);
+        using var command = Command(
+            "SELECT trace_id, mode, feedback_verdict, energy FROM traces WHERE task = $task AND mode IS NOT NULL ORDER BY created_at, trace_id",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var rows = new List<(string Mode, string? Verdict, double Cost)>();
+        while (reader.Read())
+        {
+            var cost = repriced is null ? (reader.IsDBNull(3) ? 0 : reader.GetDouble(3)) : repriced.GetValueOrDefault(reader.GetString(0));
+            rows.Add((reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), cost));
+        }
+
+        var modes = rows
+            .GroupBy(r => r.Mode, StringComparer.Ordinal)
+            .Select(g =>
+            {
+                var judged = g.Count(r => r.Verdict is "correct" or "wrong");
+                var correct = g.Count(r => r.Verdict == "correct");
+                var (low, high) = judged == 0 ? ((double?)null, (double?)null) : Wilson(correct, judged);
+                return new ModeStats(g.Key, g.Count(), judged, correct, judged == 0 ? null : (double)correct / judged, low, high);
+            })
+            .OrderByDescending(m => m.Requests)
+            .ThenBy(m => m.Mode, StringComparer.Ordinal)
+            .ToList();
+        var total = rows.Count;
+        var windows = rows.Chunk(window).Select((chunk, i) => new CostWindow(i * window, chunk.Length, chunk.Average(r => r.Cost))).ToList();
+        return new TaskStats(
+            task,
+            total,
+            modes.Sum(m => m.Judged),
+            modes,
+            total == 0 ? 0 : (double)rows.Count(r => r.Mode.StartsWith("habit/", StringComparison.Ordinal)) / total,
+            total == 0 ? 0 : (double)rows.Count(r => r.Mode == "memory") / total,
+            windows);
+    }
+
+    /// <summary>Each request's calls priced again: chat calls with <paramref name="pricing"/>, embedding calls as recorded.</summary>
+    private Dictionary<string, double> Repriced(string task, EnergyModel pricing)
+    {
+        using var command = Command(
+            "SELECT calls.trace_id, calls.role, calls.prompt_tokens, calls.cached_tokens, calls.completion_tokens, calls.energy "
+            + "FROM calls JOIN traces ON traces.trace_id = calls.trace_id WHERE traces.task = $task",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var costs = new Dictionary<string, double>(StringComparer.Ordinal);
+        while (reader.Read())
+        {
+            var cost = reader.GetString(1) == "embed"
+                ? (reader.IsDBNull(5) ? 0 : reader.GetDouble(5))
+                : pricing.Of(reader.GetInt32(2), reader.IsDBNull(3) ? 0 : reader.GetInt32(3), reader.GetInt32(4));
+            costs[reader.GetString(0)] = costs.GetValueOrDefault(reader.GetString(0)) + cost;
+        }
+
+        return costs;
+    }
+
+    /// <summary>The 95% Wilson score interval — sound at small counts and at 0 or 100%, where the normal one is not.</summary>
+    private static (double Low, double High) Wilson(int correct, int judged)
+    {
+        const double z = 1.959963984540054;
+        var p = (double)correct / judged;
+        var denominator = 1 + (z * z / judged);
+        var centre = (p + (z * z / (2 * judged))) / denominator;
+        var half = z * Math.Sqrt((p * (1 - p) / judged) + (z * z / (4.0 * judged * judged))) / denominator;
+        return (Math.Max(0, centre - half), Math.Min(1, centre + half));
+    }
+
     public HabitUsage Usage(string task)
     {
         using var command = Command(
