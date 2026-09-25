@@ -22,14 +22,15 @@ public sealed class ResolverReplayTests : IDisposable
     [Fact]
     public async Task Replays_a_recorded_stream_to_the_same_modes_outputs_paths_and_statistics()
     {
-        // Point GIL_COMPAT_RESOLVER at a recorded stream: per request the judgments per node, the generator's outputs
-        // in the order they were produced and the verdict given; per request what another implementation answered;
-        // and the habit statistics it ended with. Only the model is replayed — the walk, the narrowing, the escape to
-        // the full fallback, contract checking, feedback attribution and counting all run for real.
-        var path = Environment.GetEnvironmentVariable("GIL_COMPAT_RESOLVER");
+        // A recorded stream (the committed synthetic fixture, or a file GIL_COMPAT_RESOLVER points at): per request the
+        // judgments per node, the model's outputs (fallback and slot filling) in the order they were produced and the
+        // verdict given; per request what another implementation answered; and the habit statistics it ended with. Only
+        // the model is replayed — the walk, the narrowing, the escape to the full fallback, contract checking, slot
+        // filling and its fallback when the blanks stay empty, feedback attribution and counting all run for real.
+        var path = Conformance.Fixture("GIL_COMPAT_RESOLVER", "resolver.json");
         if (path is null)
         {
-            Assert.Skip("GIL_COMPAT_RESOLVER is not set");
+            Assert.Skip("GIL_COMPAT_RESOLVER is not set and the committed fixture is missing");
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
@@ -58,6 +59,7 @@ public sealed class ResolverReplayTests : IDisposable
                 FallbackScope = fixture.GetProperty("fallback_scope").GetString() == "path" ? FallbackScope.Path : FallbackScope.Full,
             });
         var attempts = fixture.GetProperty("fallback_max_attempts").GetInt32();
+        var slotAttempts = fixture.TryGetProperty("slot_max_attempts", out var slots) ? slots.GetInt32() : 2;
 
         var replayed = 0;
         foreach (var @case in fixture.GetProperty("cases").EnumerateArray())
@@ -68,7 +70,7 @@ public sealed class ResolverReplayTests : IDisposable
             var resolver = new Resolver(
                 new GreedyTraverser(new RecordedJudge(@case.GetProperty("judgments"))),
                 new FallbackGenerator(recorder, attempts),
-                new SlotFiller(recorder),
+                new SlotFiller(recorder, slotAttempts),
                 store,
                 statistics: store);
 
