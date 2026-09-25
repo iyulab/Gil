@@ -19,6 +19,8 @@ public static class LabelScheme
     /// <summary>The default label of "none of these": the pool's first symbol.</summary>
     public static string NoneLabel(string scheme) => Pool(scheme)[..1];
 
+    public static bool IsKnown(string scheme) => Pools.ContainsKey(scheme);
+
     /// <summary>How many candidates a node can hold under this scheme.</summary>
     public static int Capacity(string scheme) => Pool(scheme).Length - 1;
 

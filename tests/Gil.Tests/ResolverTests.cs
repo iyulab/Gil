@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Gil.Fallback;
+using Gil.Habits;
 using Gil.Llm;
 using Gil.Ontology;
 using Gil.Traverse;
@@ -256,7 +257,60 @@ public sealed class ResolverTests
         rig.Statistics.Outcomes.Should().BeEmpty();
     }
 
-    private static TaskDefinition Task(FallbackScope scope = FallbackScope.Full, bool allowFallback = true, double? memoryThreshold = null, double explorationRate = 0) =>
+    [Fact]
+    public async Task A_known_answer_that_is_not_a_habit_is_shown_as_a_shadow_and_picking_it_defers_to_the_fallback()
+    {
+        // A request already answered "leave_balance" by the fallback under "work" and confirmed. The next one like it
+        // must not be absorbed by the sibling habit "pto": the shadow is shown, picked, and the fallback answers.
+        var shadow = ShadowIndex.Id("work", "leave_balance");
+        var evidence = new FixedEvidence(new ShadowEvidence("how many days off do I have left", "work", "fallback", "leave_balance", "correct", null, null));
+        var rig = new Rig(Judgments(("work", 0.95), (shadow, 0.95)), null, evidence, "leave_balance");
+
+        // The contract knows more answers than the tree has habits for, as in any task still growing its tree.
+        var contract = OntologyYaml.Parse("""
+            id: root
+            children:
+              - id: work
+                label: Work
+                description: office matters
+                options:
+                  - {id: pto, kind: answer, label: pto, description: book a day off, text: pto_request}
+                  - {id: leave, kind: answer, label: leave, description: days off left, text: leave_balance}
+            """).Root;
+        var task = Task(shadows: true) with { Contract = new TreeAnswerContract(contract) };
+
+        var result = await rig.Resolver.ResolveAsync(task, "days of leave remaining?", "t", TestContext.Current.CancellationToken);
+
+        (result.Output, result.Mode).Should().Be(("leave_balance", "partial"));
+        rig.Judge.Shown[1].Select(c => c.Id).Should().Contain(shadow);
+        rig.Sink.Traces["t"].Outcome!.Path[^1].Chosen.Should().Be(shadow);
+        evidence.Asked.Should().Equal("support");
+    }
+
+    [Fact]
+    public async Task Shadows_are_off_unless_the_task_asks_for_them()
+    {
+        var evidence = new FixedEvidence(new ShadowEvidence("how many days off do I have left", "work", "fallback", "leave_balance", "correct", null, null));
+        var rig = new Rig(Judgments(("work", 0.95), ("pto", 0.95)), null, evidence);
+
+        await rig.Resolver.ResolveAsync(Task(), "days of leave remaining?", "t", TestContext.Current.CancellationToken);
+
+        rig.Judge.Shown[1].Select(c => c.Id).Should().NotContain(id => ShadowIndex.IsShadow(id));
+        evidence.Asked.Should().BeEmpty();
+    }
+
+    private sealed class FixedEvidence(params ShadowEvidence[] rows) : IShadowEvidenceSource
+    {
+        public List<string> Asked { get; } = [];
+
+        public IReadOnlyList<ShadowEvidence> ShadowEvidence(string task)
+        {
+            Asked.Add(task);
+            return rows;
+        }
+    }
+
+    private static TaskDefinition Task(FallbackScope scope = FallbackScope.Full, bool allowFallback = true, double? memoryThreshold = null, double explorationRate = 0, bool shadows = false) =>
         new("support", new TreeAnswerContract(Tree), Tree, new TaskPolicy
         {
             Thresholds = Strict,
@@ -264,6 +318,7 @@ public sealed class ResolverTests
             AllowFallback = allowFallback,
             MemoryThreshold = memoryThreshold,
             ExplorationRate = explorationRate,
+            Shadows = shadows,
         });
 
     private sealed class FixedRandom(double value) : Random
@@ -281,18 +336,27 @@ public sealed class ResolverTests
         }
 
         public Rig((string? Choice, double Confidence)[] judgments, Random? random, params string[] answers)
+            : this(judgments, random, null, answers)
+        {
+        }
+
+        public Rig((string? Choice, double Confidence)[] judgments, Random? random, IShadowEvidenceSource? shadows, params string[] answers)
         {
             Model = new ScriptedModel(answers);
+            Judge = new ScriptedJudge(judgments);
             var recorder = new CallRecorder(Model, new EnergyModel(1, 0, 0, 0), Sink);
             Resolver = new Resolver(
-                new GreedyTraverser(new ScriptedJudge(judgments)),
+                new GreedyTraverser(Judge),
                 new FallbackGenerator(recorder, maxAttempts: 1),
                 new SlotFiller(recorder),
                 Sink,
                 Memory,
                 Statistics,
-                random);
+                random,
+                shadows);
         }
+
+        public ScriptedJudge Judge { get; }
 
         public RecordingStatistics Statistics { get; } = new();
 
@@ -309,8 +373,11 @@ public sealed class ResolverTests
     {
         private int _next;
 
+        public List<IReadOnlyList<Candidate>> Shown { get; } = [];
+
         public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
         {
+            Shown.Add(candidates);
             var (choice, confidence) = script[_next++];
             return System.Threading.Tasks.Task.FromResult(new Judgment
             {

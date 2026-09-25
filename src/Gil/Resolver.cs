@@ -16,7 +16,8 @@ public sealed class Resolver(
     ITelemetrySink? sink = null,
     IMemory? memory = null,
     IHabitStatistics? statistics = null,
-    Random? random = null)
+    Random? random = null,
+    IShadowEvidenceSource? shadowEvidence = null)
 {
     private readonly Random _random = random ?? Random.Shared;
 
@@ -43,8 +44,11 @@ public sealed class Resolver(
             }
         }
 
-        // 2. The tree.
-        var traversed = await traverser.TraverseAsync(state, task.Ontology, task.Policy.Thresholds, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        // 2. The tree, with shadows rebuilt per request: they are a pure function of the feedback so far.
+        var shadows = task.Policy.Shadows && shadowEvidence is not null
+            ? ShadowIndex.Build(shadowEvidence.ShadowEvidence(task.Name), task.Ontology, task.Policy.NonAnswers)
+            : null;
+        var traversed = await traverser.TraverseAsync(state, task.Ontology, task.Policy.Thresholds, traceId, shadows, cancellationToken).ConfigureAwait(false);
         energy += traversed.Energy;
         var confidence = traversed.Path.Count > 0 ? traversed.Path[^1].P : 0;
         string? output;

@@ -59,6 +59,18 @@ public sealed record TaskPolicy
     /// Zero turns it off.
     /// </summary>
     public double ExplorationRate { get; init; }
+
+    /// <summary>
+    /// Shows answers already known at a node, but not habits yet, beside its habits (see <see cref="IShadowEvidenceSource"/>):
+    /// a judgment that picks one defers to the fallback instead of letting a sibling that shares its topic absorb the request.
+    /// </summary>
+    public bool Shadows { get; init; }
+
+    /// <summary>
+    /// Outputs that mean there is no answer (such as "not applicable"). As habits or shadows they would duplicate the
+    /// judgment's own "none of these".
+    /// </summary>
+    public IReadOnlySet<string> NonAnswers { get; init; } = new HashSet<string>();
 }
 
 /// <summary>A task: its output contract, its decision tree and its policy.</summary>

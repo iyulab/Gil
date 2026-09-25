@@ -10,7 +10,7 @@ namespace Gil.Telemetry;
 /// any language read these files directly, so columns may be added but never renamed or repurposed.
 /// Timestamps are UTC ISO-8601 strings; JSON columns keep non-ASCII text unescaped.
 /// </summary>
-public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IDisposable
+public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IDisposable
 {
     internal const string Schema = """
         CREATE TABLE IF NOT EXISTS traces (
@@ -207,6 +207,35 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IDi
         {
             Path = path ?? [],
         };
+    }
+
+    public IReadOnlyList<ShadowEvidence> ShadowEvidence(string task)
+    {
+        using var command = Command(
+            "SELECT state, path, mode, output, feedback_verdict, feedback_correction, explored_output FROM traces "
+            + "WHERE task = $task AND path IS NOT NULL AND (feedback_verdict IS NOT NULL OR explored_output IS NOT NULL) "
+            + "ORDER BY created_at, trace_id",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var evidence = new List<ShadowEvidence>();
+        while (reader.Read())
+        {
+            // Only the anchor matters, and a path recorded by another implementation may carry more fields per step.
+            using var path = JsonDocument.Parse(reader.GetString(1));
+            if (path.RootElement.GetArrayLength() == 0)
+            {
+                continue;
+            }
+
+            evidence.Add(new ShadowEvidence(
+                reader.GetString(0),
+                path.RootElement[path.RootElement.GetArrayLength() - 1].GetProperty("node").GetString()!,
+                Text(reader, 2), Text(reader, 3), Text(reader, 4), Text(reader, 5), Text(reader, 6)));
+        }
+
+        return evidence;
+
+        static string? Text(SqliteDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
     public void RecordPath(string scope, IReadOnlyList<PathStep> path)

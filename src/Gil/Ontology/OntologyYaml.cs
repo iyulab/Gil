@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Gil.Judge;
 using YamlDotNet.Serialization;
 
 namespace Gil.Ontology;
@@ -35,8 +36,6 @@ public static partial class OntologyYaml
     // evidence that two siblings overlap.
     private const double CommonVocabularyShare = 0.3;
     private const int MinimumSharedWords = 3;
-
-    private static readonly Dictionary<string, int> Capacity = new() { ["digits"] = 9, ["letters"] = 25 };
 
     public static LoadedOntology Load(string path) => Parse(File.ReadAllText(path));
 
@@ -107,10 +106,12 @@ public static partial class OntologyYaml
         var children = childrenRaw.Select(c => ReadNode(Mapping(c, id), warnings, seen, scheme)).ToList();
         var options = optionsRaw.Select(o => ReadHabit(Mapping(o, id), seen)).ToList();
         var count = Math.Max(children.Count, options.Count);
-        if (!Capacity.TryGetValue(scheme, out var capacity))
+        if (!LabelScheme.IsKnown(scheme))
         {
             throw new OntologyException($"{id}: unknown label scheme {scheme}");
         }
+
+        var capacity = LabelScheme.Capacity(scheme);
 
         if (count > capacity)
         {
