@@ -71,6 +71,7 @@ with what to do.
 
 ### Fixed
 
+- A rate's 95% interval is exactly 0 or 1 at 0% or 100%, not off by rounding.
 - Disposing a telemetry store no longer clears the connections of other stores in the same process.
 - Opening a store written by an older version adds the columns it lacks.
 
