@@ -5,7 +5,7 @@ single-token judgments; only what the tree cannot settle goes to full generation
 tree already confirmed. Answers that keep coming back can be promoted into habits, behind a flag and a review gate.
 
 **Status: early.** The library is being built from a specification whose behaviour was measured first in a
-research harness. Nothing is published yet.
+research harness. Published on NuGet as `Gil` (with `Gil.Abstractions`); the API may still change within 0.x.
 
 ## Layout
 
@@ -25,6 +25,10 @@ replayed from synthetic fixtures under `tests/fixtures/conformance`, which the r
 made-up support task and a deterministic model. Set the matching `GIL_COMPAT_*` variable to replay a recorded run instead.
 
 ## Usage
+
+```sh
+dotnet add package Gil
+```
 
 A request goes through memory first, then the tree of one-token judgments, then a fallback narrowed to the
 category the tree confirmed, then the full fallback. Every model call is recorded and priced in the telemetry
