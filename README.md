@@ -222,6 +222,14 @@ counts misroutes: requests whose confirmed answer lies outside the category the 
 var stats = store.Stats(task.Name, window: 100, pricing: fitted, tree: tree);
 ```
 
+Live, the same story goes to your tracing and metrics backend. Gil emits through the BCL under one name,
+`GilDiagnostics.Name` (`"Gil"`): a `gil.resolve` span per request with the task, mode, memory outcome (`off`, `hit`,
+`miss`, or `failed` — a lookup that failed and was treated as a miss), energy and confidence, a `gil.call` span under
+it per model call with its role, node and tokens, and the metrics `gil.resolutions` (by task, mode and memory
+outcome), `gil.resolution.energy`, `gil.resolution.duration` and `gil.call.energy`. With OpenTelemetry, add
+`AddSource(GilDiagnostics.Name)` and `AddMeter(GilDiagnostics.Name)`. Provider spans and token metrics (`gen_ai.*`) come
+from the model client, not from Gil, and nest under `gil.call`.
+
 ## Build and test
 
 Requires the .NET 10 SDK.

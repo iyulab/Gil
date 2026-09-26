@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using Gil.Fallback;
 using Gil.Habits;
@@ -34,6 +36,103 @@ public sealed class ResolverTests
         """).Root;
 
     private static readonly Thresholds Strict = new([0.5], Leaf: 0.9);
+
+    [Theory]
+    [InlineData("off")]
+    [InlineData("miss")]
+    [InlineData("hit")]
+    [InlineData("failed")]
+    public async Task A_request_is_traced_with_its_calls_nested_and_counted_by_task_mode_and_memory(string memory)
+    {
+        var rig = new Rig(Judgments(("travel", 0.2)), "book_flight");
+        var task = Task(memoryThreshold: memory == "off" ? null : 0.9) with { Name = $"diag-{Guid.NewGuid():N}" };
+        if (memory == "hit")
+        {
+            rig.Memory.Items.Add(("earlier", "book_flight", 0.95));
+        }
+
+        if (memory == "failed")
+        {
+            rig.Memory.Failure = new InvalidOperationException("index unavailable");
+        }
+
+        var mode = memory == "hit" ? "memory" : "fallback";
+        var activities = new List<Activity>();
+        using var tracing = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == GilDiagnostics.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                lock (activities)
+                {
+                    activities.Add(activity);
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(tracing);
+        var measurements = new List<(string Instrument, double Value, Dictionary<string, object?> Tags)>();
+        using var metering = new MeterListener
+        {
+            InstrumentPublished = (instrument, listener) =>
+            {
+                if (instrument.Meter.Name == GilDiagnostics.Name)
+                {
+                    listener.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        metering.SetMeasurementEventCallback<long>((instrument, value, tags, _) => Measured(instrument.Name, value, tags));
+        metering.SetMeasurementEventCallback<double>((instrument, value, tags, _) => Measured(instrument.Name, value, tags));
+        metering.Start();
+
+        var result = await rig.Resolver.ResolveAsync(task, "a flight to Busan", "diag-trace", TestContext.Current.CancellationToken);
+
+        List<Activity> mine;
+        lock (activities)
+        {
+            mine = [.. activities.Where(a => (string?)a.GetTagItem("gil.trace_id") == "diag-trace")];
+        }
+
+        var resolve = mine.Single(a => a.OperationName == "gil.resolve");
+        (resolve.GetTagItem("gil.task"), resolve.GetTagItem("gil.mode"), resolve.GetTagItem("gil.memory"), resolve.GetTagItem("gil.energy"))
+            .Should().Be((task.Name, mode, memory, result.Energy));
+        var calls = mine.Where(a => a.OperationName == "gil.call").ToList();
+        if (memory == "hit")
+        {
+            calls.Should().BeEmpty();
+        }
+        else
+        {
+            (calls.Single().ParentSpanId, calls.Single().GetTagItem("gil.call.role"), calls.Single().GetTagItem("gil.energy"))
+                .Should().Be((resolve.SpanId, "fallback", 1.0));
+        }
+
+        List<(string Instrument, double Value, Dictionary<string, object?> Tags)> counted;
+        lock (measurements)
+        {
+            counted = [.. measurements.Where(m => Equals(m.Tags.GetValueOrDefault("gil.task"), task.Name))];
+        }
+
+        var resolved = counted.Single(m => m.Instrument == "gil.resolutions");
+        (resolved.Value, resolved.Tags["gil.mode"], resolved.Tags["gil.memory"]).Should().Be((1.0, mode, memory));
+        counted.Single(m => m.Instrument == "gil.resolution.energy").Value.Should().Be(result.Energy);
+        counted.Should().ContainSingle(m => m.Instrument == "gil.resolution.duration");
+
+        void Measured(string instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags)
+        {
+            var copy = new Dictionary<string, object?>();
+            foreach (var (key, tag) in tags)
+            {
+                copy[key] = tag;
+            }
+
+            lock (measurements)
+            {
+                measurements.Add((instrument, value, copy));
+            }
+        }
+    }
 
     [Fact]
     public async Task A_confident_tree_answers_from_the_habit_without_generation()

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Gil.Fallback;
 using Gil.Habits;
 using Gil.Traverse;
@@ -24,7 +25,24 @@ public sealed class Resolver(
     public async Task<Resolution> ResolveAsync(TaskDefinition task, string state, string? traceId = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(task);
-        traceId ??= Guid.NewGuid().ToString("N");
+        using var activity = GilDiagnostics.Source.StartActivity("gil.resolve");
+        activity?.SetTag("gil.task", task.Name);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            var resolution = await ResolveCoreAsync(task, state, traceId ?? Guid.NewGuid().ToString("N"), cancellationToken).ConfigureAwait(false);
+            GilDiagnostics.Resolved(activity, task.Name, resolution, MemoryOutcome(task, resolution.Recall), Stopwatch.GetElapsedTime(started));
+            return resolution;
+        }
+        catch (Exception error)
+        {
+            GilDiagnostics.Failed(activity, error);
+            throw;
+        }
+    }
+
+    private async Task<Resolution> ResolveCoreAsync(TaskDefinition task, string state, string traceId, CancellationToken cancellationToken)
+    {
         sink?.OpenTrace(traceId, task.Name, state);
 
         // 1. Memory. A hit never touches the tree, so it is not evidence for the tree's habits either.
@@ -160,6 +178,13 @@ public sealed class Resolver(
             }
         }
     }
+
+    /// <summary>What memory did for a request: <c>off</c>, <c>hit</c>, <c>miss</c>, or <c>failed</c> (treated as a miss).</summary>
+    private string MemoryOutcome(TaskDefinition task, Recall? recall) =>
+        memory is null || task.Policy.MemoryThreshold is null ? "off"
+        : recall?.Error is not null ? "failed"
+        : recall?.Hit == true ? "hit"
+        : "miss";
 
     /// <summary>A memory failure the task treats as a miss — never a cancellation the caller asked for.</summary>
     private static bool IsDegradable(TaskDefinition task, Exception error, CancellationToken cancellationToken) =>

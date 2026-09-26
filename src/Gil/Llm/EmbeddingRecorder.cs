@@ -11,7 +11,18 @@ public sealed class EmbeddingRecorder(IEmbeddingModel model, EnergyModel energy,
     public async Task<(IReadOnlyList<float[]> Vectors, CallRecord Call)> EmbedAsync(IReadOnlyList<string> texts, string traceId, CancellationToken cancellationToken = default)
     {
         var createdAt = _clock.GetUtcNow();
-        var result = await model.EmbedAsync(texts, cancellationToken).ConfigureAwait(false);
+        using var activity = GilDiagnostics.StartCall("embed", traceId, nodeId: null, layer: null);
+        EmbeddingResult result;
+        try
+        {
+            result = await model.EmbedAsync(texts, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            GilDiagnostics.Failed(activity, error);
+            throw;
+        }
+
         var call = new CallRecord
         {
             CallId = Guid.NewGuid().ToString("N"),
@@ -27,6 +38,7 @@ public sealed class EmbeddingRecorder(IEmbeddingModel model, EnergyModel energy,
             RawResponse = result.RawResponse,
         };
         sink?.RecordCall(call);
+        GilDiagnostics.Called(activity, call);
         return (result.Vectors, call);
     }
 }

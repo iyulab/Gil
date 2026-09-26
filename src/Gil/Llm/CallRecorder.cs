@@ -19,7 +19,18 @@ public sealed class CallRecorder(IChatModel model, EnergyModel energy, ITelemetr
         CancellationToken cancellationToken = default)
     {
         var createdAt = _clock.GetUtcNow();
-        var result = await model.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+        using var activity = GilDiagnostics.StartCall(role, traceId, nodeId, layer);
+        ChatResult result;
+        try
+        {
+            result = await model.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            GilDiagnostics.Failed(activity, error);
+            throw;
+        }
+
         var record = new CallRecord
         {
             CallId = Guid.NewGuid().ToString("N"),
@@ -49,6 +60,7 @@ public sealed class CallRecorder(IChatModel model, EnergyModel energy, ITelemetr
         }
 
         sink?.RecordCall(record);
+        GilDiagnostics.Called(activity, record);
         return record;
     }
 }
