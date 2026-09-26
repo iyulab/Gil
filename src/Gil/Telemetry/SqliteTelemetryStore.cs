@@ -503,7 +503,8 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         var denominator = 1 + (z * z / judged);
         var centre = (p + (z * z / (2 * judged))) / denominator;
         var half = z * Math.Sqrt((p * (1 - p) / judged) + (z * z / (4.0 * judged * judged))) / denominator;
-        return (Math.Max(0, centre - half), Math.Min(1, centre + half));
+        // At 0 or 100% the bound is exactly 0 or 1; the formula leaves rounding noise there instead.
+        return (correct == 0 ? 0 : Math.Max(0, centre - half), correct == judged ? 1 : Math.Min(1, centre + half));
     }
 
     public HabitUsage Usage(string task)

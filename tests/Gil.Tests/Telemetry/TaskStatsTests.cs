@@ -55,7 +55,7 @@ public sealed class TaskStatsTests : IDisposable
         habit.High!.Value.Should().BeApproximately(0.943318, 1e-6);
         var fallback = stats.Modes[1];
         fallback.Accuracy.Should().Be(0);
-        fallback.Low!.Value.Should().BeApproximately(0, 1e-12);
+        fallback.Low.Should().Be(0, "exactly, not rounding noise");
         fallback.High!.Value.Should().BeApproximately(0.561497, 1e-6);
         stats.Modes[3].Should().Be(new ModeStats("habit/template", 1, 0, 0, null, null, null));
         store.Stats("other").MemoryFailures.Should().Be(0);
