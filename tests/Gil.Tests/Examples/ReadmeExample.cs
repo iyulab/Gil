@@ -31,7 +31,7 @@ internal static class ReadmeExample
         // Calls are priced in the unit you report (GPU milliseconds or dollars), with coefficients fitted for your server.
         var recorder = new CallRecorder(chat, new EnergyModel(Fixed: 120, PerFreshPromptToken: 0.7, PerCachedToken: 0, PerOutputToken: 15), store);
 
-        using var embedder = new OpenAICompatibleEmbeddingModel(new OpenAICompatibleOptions
+        using var embedder = IronHiveEmbeddingModel.OpenAICompatible(new OpenAICompatibleOptions
         {
             BaseUrl = new Uri("http://localhost:8081/"),
             ApiKey = "",

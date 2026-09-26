@@ -6,7 +6,7 @@
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
   </ItemGroup>
   <ItemGroup Label="Models">
-    <PackageVersion Include="IronHive.Providers.OpenAI.Compatible" Version="0.39.0" />
+    <PackageVersion Include="IronHive.Providers.OpenAI.Compatible" Version="0.41.0" />
   </ItemGroup>
   <ItemGroup Label="Serialization">
     <PackageVersion Include="YamlDotNet" Version="18.1.0" />

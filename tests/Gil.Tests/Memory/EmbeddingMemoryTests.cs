@@ -21,7 +21,7 @@ public sealed class EmbeddingMemoryTests
     public async Task The_transport_reads_vectors_in_input_order_and_the_recorder_prices_them_with_its_own_model()
     {
         using var handler = new Respond("""{"model":"embedder","data":[{"index":1,"embedding":[0,1]},{"index":0,"embedding":[1,0]}],"usage":{"prompt_tokens":7}}""");
-        var model = new OpenAICompatibleEmbeddingModel(
+        var model = IronHiveEmbeddingModel.OpenAICompatible(
             new OpenAICompatibleOptions { BaseUrl = new Uri("http://model.test/"), ApiKey = "k", Model = "e", ExtraBody = new JsonObject { ["dimensions"] = 2 } }, handler);
         var sink = new ListSink();
 
@@ -33,6 +33,7 @@ public sealed class EmbeddingMemoryTests
         var sent = JsonNode.Parse(handler.Body!)!;
         sent["input"]!.AsArray().Select(n => n!.GetValue<string>()).Should().Equal("a", "b");
         (sent["model"]!.GetValue<string>(), sent["dimensions"]!.GetValue<int>()).Should().Be(("e", 2));
+        handler.Uri.Should().Be(new Uri("http://model.test/v1/embeddings"));
         call.RawResponse.Should().NotContain("embedding");
         sink.Calls.Should().ContainSingle();
     }
@@ -146,7 +147,7 @@ public sealed class EmbeddingMemoryTests
             Assert.Skip("GIL_LIVE_BASE_URL or GIL_LIVE_EMBEDDING_MODEL is not set");
         }
 
-        using var model = new OpenAICompatibleEmbeddingModel(new OpenAICompatibleOptions
+        using var model = IronHiveEmbeddingModel.OpenAICompatible(new OpenAICompatibleOptions
         {
             BaseUrl = new Uri(baseUrl.TrimEnd('/') + "/"),
             ApiKey = Environment.GetEnvironmentVariable("GIL_LIVE_API_KEY") ?? "",
@@ -160,6 +161,9 @@ public sealed class EmbeddingMemoryTests
         var (far, _) = await memory.LookupAsync("live", "I want to cancel my insurance policy", "t3", TestContext.Current.CancellationToken);
 
         near!.Similarity.Should().BeGreaterThan(far!.Similarity);
+        // Cost accounting reads the server's own usage and model, not an estimate.
+        var reported = await model.EmbedAsync(["a short text"], TestContext.Current.CancellationToken);
+        (reported.PromptTokens > 0, reported.Model.Length > 0).Should().Be((true, true));
     }
 
     private sealed class Vectors(params float[][] script) : IEmbeddingModel
@@ -198,9 +202,11 @@ public sealed class EmbeddingMemoryTests
     private sealed class Respond(string body) : HttpMessageHandler
     {
         public string? Body { get; private set; }
+        public Uri? Uri { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            Uri = request.RequestUri;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
         }

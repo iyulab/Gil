@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json.Nodes;
+using IronHive.Abstractions.Http;
 
 namespace Gil.Llm;
 
@@ -42,14 +43,16 @@ public sealed record OpenAICompatibleOptions
 internal static class OpenAICompatibleHttp
 {
     /// <param name="options">Endpoint and retries.</param>
-    /// <param name="transport">The handler that sends; a socket handler by default. Tests pass a scripted one.</param>
+    /// <param name="transport">The handler that sends; IronHive's connection-racing socket handler by default. Tests pass a scripted one.</param>
     /// <param name="delay">Backoff between retries; the real clock by default.</param>
     public static HttpClient CreateClient(OpenAICompatibleOptions options, HttpMessageHandler? transport, Func<TimeSpan, CancellationToken, Task>? delay)
     {
         ArgumentNullException.ThrowIfNull(options);
         var retry = new SharedServerRetryHandler(options, delay)
         {
-            InnerHandler = transport ?? new SocketsHttpHandler { ConnectTimeout = options.ConnectTimeout },
+            // IronHive's own transport: races the host's addresses, so `localhost` reaches a server listening on IPv4 only
+            // without first waiting out the IPv6 attempt.
+            InnerHandler = transport ?? ProviderConnect.CreateHandler(options.ConnectTimeout),
         };
 
         // Deadlines are per attempt, in the handler; a client-wide timeout would cut across retries.
