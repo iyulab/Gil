@@ -40,6 +40,8 @@ with what to do.
 
 ### Added
 
+- `EmbeddingGeneratorModel`: memory embeds through any Microsoft.Extensions.AI `IEmbeddingGenerator` (`Gil` now
+  references `Microsoft.Extensions.AI.Abstractions`, which has no dependencies on .NET 10).
 - `PromptLanguage` with `Korean` and `English` built in.
 - Promotion rounds are recorded and read back: `RecordPromotionRound`, `PromotionRound`, `PromotionHistory`.
 - Review decisions: `RecordReview` and `Reviews` for promotion, deactivation and differentiation items.

@@ -36,7 +36,7 @@ between models (a router does that), or for a task that never gets feedback (mem
 | Project | Contents |
 |---|---|
 | `Gil.Abstractions` | Records and ports: the decision tree, model calls, traversal steps, telemetry sink, habit statistics |
-| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling, the resolver (memory → tree → narrowed fallback → full fallback), embedding memory, habit statistics (visits per node, and per-judgment credit and blame from feedback, kept as raw counts), an optional exploration rate that cross-checks accepted answers against the full fallback, optional shadows (answers already known at a node but not yet habits, shown beside its habits so that picking one defers to the fallback instead of letting a similar sibling absorb the request), and promotion proposals (a confirmed fallback answer that keeps recurring at a node, proposed as a habit when it saves more than the judgment it adds, with the tree before and after for review), and deactivation proposals (unreliable, disputed or stale habits, each for its heaviest reason, with age counted in requests), and differentiation signals (a node at its label capacity, and answers repeating at a node with children, told apart as missed, belonging under one child, or needing a new category) |
+| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling, the resolver (memory → tree → narrowed fallback → full fallback), embedding memory (over any Microsoft.Extensions.AI embedding generator too, through `EmbeddingGeneratorModel`), habit statistics (visits per node, and per-judgment credit and blame from feedback, kept as raw counts), an optional exploration rate that cross-checks accepted answers against the full fallback, optional shadows (answers already known at a node but not yet habits, shown beside its habits so that picking one defers to the fallback instead of letting a similar sibling absorb the request), and promotion proposals (a confirmed fallback answer that keeps recurring at a node, proposed as a habit when it saves more than the judgment it adds, with the tree before and after for review), and deactivation proposals (unreliable, disputed or stale habits, each for its heaviest reason, with age counted in requests), and differentiation signals (a node at its label capacity, and answers repeating at a node with children, told apart as missed, belonging under one child, or needing a new category) |
 | `Gil.IronHive` | Chat and embedding models through any IronHive generator, with ready-made ones for OpenAI-compatible servers (retry rules for busy shared servers, the response kept as received). Optional: implement `IChatModel` and `IEmbeddingModel` yourself and `Gil` needs nothing else |
 | `Gil.Tests` | Unit tests and the compatibility fixture writer |
 
@@ -122,6 +122,10 @@ var result = await resolver.ResolveAsync(task, "I lost my card");
 Console.WriteLine($"{result.Mode}: {result.Output}");
 await resolver.FeedbackAsync(task, result.TraceId, correct: true);
 ```
+
+Memory can embed through any Microsoft.Extensions.AI `IEmbeddingGenerator<string, Embedding<float>>` instead:
+`new EmbeddingGeneratorModel(generator)` takes the place of the IronHive embedder, with the provider's usage and model
+recorded the same way.
 
 The tree file names the categories and, under each, the answers a request can get. Only `id` is required; a
 field left out takes the value shown in the comment, and the writer leaves out any field equal to it, so a file
