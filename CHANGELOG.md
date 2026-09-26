@@ -40,6 +40,8 @@ with what to do.
 
 ### Added
 
+- `MemoryReplay`: the confirmed answers and overturned keys in a feedback history, applied to any `IMemory` — rebuild
+  a memory store of your own from the log. README section on bringing your own memory store.
 - Traces and metrics through `ActivitySource` and `Meter` named `GilDiagnostics.Name`: `gil.resolve` and `gil.call`
   spans, and `gil.resolutions`, `gil.resolution.energy`, `gil.resolution.duration` and `gil.call.energy`.
 - `EmbeddingGeneratorModel`: memory embeds through any Microsoft.Extensions.AI `IEmbeddingGenerator` (`Gil` now

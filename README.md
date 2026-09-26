@@ -174,6 +174,18 @@ store:
 await remembered.RebuildAsync(task.Name, store.FeedbackHistory(task.Name), traceId: "startup");
 ```
 
+Memory is a port, `IMemory`, so it can live elsewhere — a vector store several instances share, for example. The
+contract is three calls: `LookupAsync` returns the task's nearest remembered request (keyed by its trace id, with the
+similarity — the task's `MemoryThreshold` decides whether it answers) and the energy the lookup cost; `RememberAsync`
+stores a confirmed answer under the request's trace id; `Forget` removes one. The resolver calls them as verdicts
+arrive, and a lookup that throws is a miss (or an error, per `MemoryFailure`), so `CircuitBreakingMemory` wraps any of
+them. To fill a store from the log, `MemoryReplay` reads the same rule off the feedback history and applies it through
+those calls. Tenants belong in the task name — one task per tenant and job — so nothing crosses between them:
+
+```csharp
+await MemoryReplay.From(store.FeedbackHistory(task.Name)).ApplyAsync(memory, task.Name);
+```
+
 Promotion never edits the tree by itself. Whoever operates the task runs a round, reviews the result against the
 authored YAML and applies what they accept:
 

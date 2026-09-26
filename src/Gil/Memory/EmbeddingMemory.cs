@@ -72,36 +72,32 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
     /// <summary>
     /// Rebuilds the task's index from its feedback history: confirmed answers only (a correct output, or the correction of
     /// a wrong one), minus remembered answers later overturned. With <paramref name="clear"/> false the history is applied on
-    /// top of the current index — seed first, then rebuild, so an overturned seed stays forgotten.
+    /// top of the current index — seed first, then rebuild, so an overturned seed stays forgotten. The rule is
+    /// <see cref="MemoryReplay"/>'s; this applies it in embedding batches.
     /// </summary>
     public async Task<int> RebuildAsync(string task, IReadOnlyList<FeedbackEntry> history, string traceId, bool clear = true, int batch = 64, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(history);
-        var overturned = history.Where(e => e.Mode == "memory" && e.Verdict == "wrong" && e.Recall is not null).Select(e => e.Recall!.Source).OfType<string>().ToHashSet();
-        var confirmed = history
-            .Select(e => (e.TraceId, e.State, Answer: e.Verdict == "correct" ? e.Output : e.Correction))
-            .Where(e => !string.IsNullOrEmpty(e.Answer) && !overturned.Contains(e.TraceId))
-            .ToList();
+        var replay = MemoryReplay.From(history);
         if (clear)
         {
             _indexes.Remove(task);
         }
 
-        foreach (var source in overturned)
+        foreach (var source in replay.Forget)
         {
             Forget(task, source);
         }
 
-        foreach (var chunk in confirmed.Chunk(batch))
+        foreach (var chunk in replay.Remember.Chunk(batch))
         {
             var (vectors, _) = await embedder.EmbedAsync([.. chunk.Select(e => e.State)], traceId, cancellationToken).ConfigureAwait(false);
             for (var i = 0; i < chunk.Length; i++)
             {
-                Put(task, chunk[i].TraceId, Unit(vectors[i]), chunk[i].Answer!);
+                Put(task, chunk[i].Key, Unit(vectors[i]), chunk[i].Answer);
             }
         }
 
-        return confirmed.Count;
+        return replay.Remember.Count;
     }
 
     private void Keep(string traceId, float[] vector)
