@@ -7,6 +7,10 @@ with what to do.
 
 ### Breaking
 
+- **The IronHive models are a package of their own, `Gil.IronHive`.** `IronHiveChatModel`, `IronHiveEmbeddingModel`
+  and `OpenAICompatibleOptions` move there, in namespace `Gil.IronHive`, and `Gil` no longer depends on IronHive. Add
+  `dotnet add package Gil.IronHive` and `using Gil.IronHive;`. A consumer that implements `IChatModel` and
+  `IEmbeddingModel` itself needs only `Gil`.
 - **Every task declares its prompt language.** `TaskDefinition` takes a fifth argument, `PromptLanguage`, with no
   default. Pass `PromptLanguage.English` or `PromptLanguage.Korean` (the wording 0.1.0 used, unchanged), or change a
   piece of either with `with { ... }`:

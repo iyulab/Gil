@@ -7,7 +7,6 @@
     <ProjectReference Include="..\Gil.Abstractions\Gil.Abstractions.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="IronHive.Providers.OpenAI.Compatible" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>

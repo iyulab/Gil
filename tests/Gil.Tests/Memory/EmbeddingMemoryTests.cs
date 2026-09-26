@@ -1,13 +1,14 @@
 using System.Net;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
+using Microsoft.Data.Sqlite;
 using Gil.Fallback;
+using Gil.IronHive;
 using Gil.Llm;
 using Gil.Memory;
 using Gil.Ontology;
 using Gil.Telemetry;
 using Gil.Traverse;
-using Microsoft.Data.Sqlite;
 
 namespace Gil.Tests.Memory;
 

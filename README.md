@@ -5,7 +5,7 @@ single-token judgments; only what the tree cannot settle goes to full generation
 tree already confirmed. Answers that keep coming back can be promoted into habits, behind a flag and a review gate.
 
 **Status: early.** The library is being built from a specification whose behaviour was measured first in a
-research harness. Published on NuGet as `Gil` (with `Gil.Abstractions`); the API may still change within 0.x —
+research harness. Published on NuGet as `Gil` (with `Gil.Abstractions`) and `Gil.IronHive`; the API may still change within 0.x —
 [CHANGELOG.md](https://github.com/iyulab/Gil/blob/main/CHANGELOG.md) lists each change and what to do about it.
 
 ## When to use it
@@ -36,7 +36,8 @@ between models (a router does that), or for a task that never gets feedback (mem
 | Project | Contents |
 |---|---|
 | `Gil.Abstractions` | Records and ports: the decision tree, model calls, traversal steps, telemetry sink, habit statistics |
-| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, chat models through any IronHive message generator (a ready-made one for OpenAI-compatible servers, with retry rules for busy shared servers and the response kept as received) with calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling, the resolver (memory → tree → narrowed fallback → full fallback), embedding memory, habit statistics (visits per node, and per-judgment credit and blame from feedback, kept as raw counts), an optional exploration rate that cross-checks accepted answers against the full fallback, optional shadows (answers already known at a node but not yet habits, shown beside its habits so that picking one defers to the fallback instead of letting a similar sibling absorb the request), and promotion proposals (a confirmed fallback answer that keeps recurring at a node, proposed as a habit when it saves more than the judgment it adds, with the tree before and after for review), and deactivation proposals (unreliable, disputed or stale habits, each for its heaviest reason, with age counted in requests), and differentiation signals (a node at its label capacity, and answers repeating at a node with children, told apart as missed, belonging under one child, or needing a new category) |
+| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling, the resolver (memory → tree → narrowed fallback → full fallback), embedding memory, habit statistics (visits per node, and per-judgment credit and blame from feedback, kept as raw counts), an optional exploration rate that cross-checks accepted answers against the full fallback, optional shadows (answers already known at a node but not yet habits, shown beside its habits so that picking one defers to the fallback instead of letting a similar sibling absorb the request), and promotion proposals (a confirmed fallback answer that keeps recurring at a node, proposed as a habit when it saves more than the judgment it adds, with the tree before and after for review), and deactivation proposals (unreliable, disputed or stale habits, each for its heaviest reason, with age counted in requests), and differentiation signals (a node at its label capacity, and answers repeating at a node with children, told apart as missed, belonging under one child, or needing a new category) |
+| `Gil.IronHive` | Chat and embedding models through any IronHive generator, with ready-made ones for OpenAI-compatible servers (retry rules for busy shared servers, the response kept as received). Optional: implement `IChatModel` and `IEmbeddingModel` yourself and `Gil` needs nothing else |
 | `Gil.Tests` | Unit tests and the compatibility fixture writer |
 
 The telemetry file layout is a contract: analysis tools read it directly, so columns may be added but never
@@ -52,6 +53,7 @@ made-up support task and a deterministic model. Set the matching `GIL_COMPAT_*` 
 
 ```sh
 dotnet add package Gil
+dotnet add package Gil.IronHive   # the models below; skip it if you bring your own IChatModel
 ```
 
 A request goes through memory first, then the tree of one-token judgments, then a fallback narrowed to the
@@ -63,6 +65,7 @@ using System.Text.Json.Nodes;
 using Gil;
 using Gil.Fallback;
 using Gil.Habits;
+using Gil.IronHive;
 using Gil.Judge;
 using Gil.Llm;
 using Gil.Memory;

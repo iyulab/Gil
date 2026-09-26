@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Gil.Fallback;
+using Gil.IronHive;
 using Gil.Judge;
 using Gil.Llm;
 using Gil.Ontology;

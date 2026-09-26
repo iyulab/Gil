@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Gil\Gil.csproj" />
+    <ProjectReference Include="..\..\src\Gil.IronHive\Gil.IronHive.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

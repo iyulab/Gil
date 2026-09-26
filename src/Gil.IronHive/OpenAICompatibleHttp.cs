@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.Json.Nodes;
 using IronHive.Abstractions.Http;
 
-namespace Gil.Llm;
+namespace Gil.IronHive;
 
 /// <summary>Connection and retry settings for an OpenAI-compatible endpoint (chat completions or embeddings).</summary>
 public sealed record OpenAICompatibleOptions

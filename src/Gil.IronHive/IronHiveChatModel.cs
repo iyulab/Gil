@@ -6,7 +6,7 @@ using IronHive.Providers.OpenAI;
 using IronHive.Providers.OpenAI.Compatible;
 using IronHive.Providers.OpenAI.Compatible.ChatCompletion;
 
-namespace Gil.Llm;
+namespace Gil.IronHive;
 
 /// <summary>
 /// Chat completions through an IronHive <see cref="IMessageGenerator"/>, reading what judgments and cost accounting

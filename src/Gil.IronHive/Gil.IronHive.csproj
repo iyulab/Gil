@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Gil.IronHive</RootNamespace>
+    <Description>Gil's chat and embedding models over IronHive: OpenAI-compatible endpoints (OpenAI, llama.cpp, vLLM) with first-token log-probabilities, reported usage and shared-server retry rules, or any IronHive generator.</Description>
+    <PackageTags>$(PackageTags);ironhive;openai</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gil.Abstractions\Gil.Abstractions.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="IronHive.Providers.OpenAI.Compatible" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Gil.Tests" />
+  </ItemGroup>
+</Project>

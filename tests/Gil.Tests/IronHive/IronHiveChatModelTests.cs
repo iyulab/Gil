@@ -1,11 +1,12 @@
 using System.Net;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
-using Gil.Llm;
-using IronHive.Abstractions.Messages;
 using IronHive.Abstractions.Messages.Content;
+using IronHive.Abstractions.Messages;
+using Gil.IronHive;
+using Gil.Llm;
 
-namespace Gil.Tests.Llm;
+namespace Gil.Tests.IronHive;
 
 public sealed class IronHiveChatModelTests
 {

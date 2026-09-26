@@ -4,7 +4,7 @@ using IronHive.Abstractions.Embedding;
 using IronHive.Providers.OpenAI;
 using IronHive.Providers.OpenAI.Compatible.Embedding;
 
-namespace Gil.Llm;
+namespace Gil.IronHive;
 
 /// <summary>
 /// Embeddings through an IronHive <see cref="IEmbeddingGenerator"/>, reading the vectors in input order together with
