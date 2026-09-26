@@ -106,7 +106,7 @@ public sealed class EmbeddingMemoryTests
         {
             var path = Path.Combine(directory, "m.sqlite");
             var tree = OntologyYaml.Parse("id: root\noptions: [{id: refund, kind: answer, label: refund, description: refunds, text: refund_policy}]").Root;
-            var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new TaskPolicy { Thresholds = new([0.5], 0.5), MemoryThreshold = 0.9 });
+            var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new TaskPolicy { Thresholds = new([0.5], 0.5), MemoryThreshold = 0.9 }, PromptLanguage.Korean);
             using (var store = new SqliteTelemetryStore(path))
             {
                 var memory = new EmbeddingMemory(new EmbeddingRecorder(new Vectors(Refund, RefundNear), new EnergyModel(1, 0, 0, 0), store));
@@ -176,7 +176,7 @@ public sealed class EmbeddingMemoryTests
 
     private sealed class AlwaysAccept : IJudge
     {
-        public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default) =>
+        public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, PromptLanguage language, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default) =>
             Task.FromResult(new Judgment
             {
                 Probs = new Dictionary<string, double> { [candidates[0].Id] = 0.99 },

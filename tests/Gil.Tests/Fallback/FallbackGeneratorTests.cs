@@ -28,13 +28,13 @@ public sealed class FallbackGeneratorTests
     [Fact]
     public void Contracts_validate_their_shapes()
     {
-        new TextContract(MaxChars: 5).Validate("toolong").Should().Contain("5자를 넘었다");
-        new TextContract().Validate("  ").Should().Be("빈 응답");
-        new ChoiceContract(["yes", "no"]).Validate(" yes ").Should().BeNull();
-        new ChoiceContract(["yes", "no"]).Validate("maybe").Should().Contain("maybe");
-        new ScoreContract(1, 5).Validate("3").Should().BeNull();
-        new ScoreContract(1, 5).Validate("9").Should().Contain("범위를 벗어났다");
-        new ScoreContract(1, 5).Validate("x").Should().Contain("정수가 아니다");
+        new TextContract(MaxChars: 5).Validate("toolong", PromptLanguage.Korean).Should().Contain("5자를 넘었다");
+        new TextContract().Validate("  ", PromptLanguage.Korean).Should().Be("빈 응답");
+        new ChoiceContract(["yes", "no"]).Validate(" yes ", PromptLanguage.Korean).Should().BeNull();
+        new ChoiceContract(["yes", "no"]).Validate("maybe", PromptLanguage.Korean).Should().Contain("maybe");
+        new ScoreContract(1, 5).Validate("3", PromptLanguage.Korean).Should().BeNull();
+        new ScoreContract(1, 5).Validate("9", PromptLanguage.Korean).Should().Contain("범위를 벗어났다");
+        new ScoreContract(1, 5).Validate("x", PromptLanguage.Korean).Should().Contain("정수가 아니다");
     }
 
     [Fact]
@@ -42,13 +42,15 @@ public sealed class FallbackGeneratorTests
     {
         var contract = new TreeAnswerContract(OntologyYaml.Parse(Tree).Root);
 
-        contract.Validate("book_flight").Should().BeNull();
-        contract.Validate("해당 없음").Should().BeNull();
+        contract.Validate("book_flight", PromptLanguage.Korean).Should().BeNull();
+        contract.Validate("해당 없음", PromptLanguage.Korean).Should().BeNull();
         var scoped = contract.Scoped("work")!;
-        scoped.Escape.Should().Be("이 범주에 없음");
-        scoped.Contract.Validate("pto_request").Should().BeNull();
-        scoped.Contract.Validate("book_flight").Should().NotBeNull();
-        scoped.Contract.Validate("이 범주에 없음").Should().BeNull();
+        scoped.Validate("pto_request", PromptLanguage.Korean).Should().BeNull();
+        scoped.Validate("book_flight", PromptLanguage.Korean).Should().NotBeNull();
+        scoped.Validate("이 범주에 없음", PromptLanguage.Korean).Should().BeNull();
+        scoped.Validate("해당 없음", PromptLanguage.Korean).Should().NotBeNull();
+        scoped.Validate("Not in this category", PromptLanguage.English).Should().BeNull();
+        scoped.Instruction(PromptLanguage.Korean).Should().EndWith("\n- 이 범주에 없음\n이름 하나만 그대로 출력하라.");
         contract.Scoped("missing").Should().BeNull();
     }
 
@@ -57,7 +59,7 @@ public sealed class FallbackGeneratorTests
     {
         var (generator, model) = Generator("", "a proper answer");
 
-        var result = await generator.GenerateAsync("hello", new TextContract(), "t", ["Work", "PTO"], cancellationToken: TestContext.Current.CancellationToken);
+        var result = await generator.GenerateAsync("hello", new TextContract(), PromptLanguage.Korean, "t", ["Work", "PTO"], cancellationToken: TestContext.Current.CancellationToken);
 
         result.Should().Be(new FallbackResult("a proper answer", 2, 2.0, null));
         model.Requests[0].Messages[^1].Content.Should().Contain("분류 경로: Work > PTO (이 범위 안에서 답하라)");
@@ -69,7 +71,7 @@ public sealed class FallbackGeneratorTests
     {
         var (generator, _) = Generator("maybe", "perhaps", "unsure");
 
-        var result = await generator.GenerateAsync("hello", new ChoiceContract(["yes", "no"]), "t", cancellationToken: TestContext.Current.CancellationToken);
+        var result = await generator.GenerateAsync("hello", new ChoiceContract(["yes", "no"]), PromptLanguage.Korean, "t", cancellationToken: TestContext.Current.CancellationToken);
 
         result.Output.Should().BeNull();
         result.Attempts.Should().Be(3);
@@ -99,7 +101,7 @@ public sealed class FallbackGeneratorTests
                 : node.Habits.Select(h => new Candidate(h.Id, h.Label, h.Description)).ToList();
             var model = new ScriptedModel("A");
             var judge = new SingleTokenJudge(new CallRecorder(model, new EnergyModel(0, 1, 0, 1)), new SingleTokenJudgeOptions { Scheme = expected.GetProperty("scheme").GetString()! });
-            await judge.JudgeAsync(expected.GetProperty("state").GetString()!, candidates, "t", node.Id, cancellationToken: ct);
+            await judge.JudgeAsync(expected.GetProperty("state").GetString()!, candidates, PromptLanguage.Korean, "t", node.Id, cancellationToken: ct);
             model.Requests[0].Messages[0].Content.Should().Be(expected.GetProperty("system").GetString());
             model.Requests[0].Messages[1].Content.Should().Be(expected.GetProperty("user").GetString(), node.Id);
         }
@@ -114,7 +116,7 @@ public sealed class FallbackGeneratorTests
                 "choice" => new ChoiceContract(["yes", "no"]),
                 "score" => new ScoreContract(1, 5),
                 "tree" => new TreeAnswerContract(root),
-                "tree-scoped" => new TreeAnswerContract(root).Scoped(expected.GetProperty("scoped_node").GetString()!)!.Contract,
+                "tree-scoped" => new TreeAnswerContract(root).Scoped(expected.GetProperty("scoped_node").GetString()!)!,
                 _ => throw new InvalidOperationException(name),
             };
             var complaint = expected.GetProperty("complaint").GetString();
@@ -124,6 +126,7 @@ public sealed class FallbackGeneratorTests
             await generator.GenerateAsync(
                 expected.GetProperty("state").GetString()!,
                 contract,
+                PromptLanguage.Korean,
                 "t",
                 [.. expected.GetProperty("path").EnumerateArray().Select(p => p.GetString()!)],
                 [.. expected.GetProperty("examples").EnumerateArray().Select(p => p.GetString()!)],

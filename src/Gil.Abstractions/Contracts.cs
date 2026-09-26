@@ -6,22 +6,20 @@ namespace Gil;
 /// </summary>
 public interface IOutputContract
 {
-    /// <summary>What the generator is told about the expected output.</summary>
-    string Instruction();
+    /// <summary>What the generator is told about the expected output, in the task's language.</summary>
+    string Instruction(PromptLanguage language);
 
-    /// <summary>Why <paramref name="text"/> breaks the contract, or null when it meets it.</summary>
-    string? Validate(string text);
+    /// <summary>Why <paramref name="text"/> breaks the contract, in the task's language (it is fed back to the model), or null when it meets it.</summary>
+    string? Validate(string text, PromptLanguage language);
 }
-
-/// <summary>
-/// A contract narrowed to a confirmed category. The category itself may be wrong — the judgment above it can err —
-/// so the generator may answer <see cref="Escape"/> instead, and the caller then solves again under the full contract.
-/// </summary>
-public sealed record ScopedContract(IOutputContract Contract, string Escape);
 
 /// <summary>A contract that can be narrowed to the part of the tree below a node.</summary>
 public interface IScopableContract
 {
-    /// <summary>The narrowed contract, or null when there is nothing to narrow to.</summary>
-    ScopedContract? Scoped(string nodeId);
+    /// <summary>
+    /// The contract narrowed to a confirmed category, or null when there is nothing to narrow to. The category itself
+    /// may be wrong — the judgment above it can err — so the narrowed contract also accepts the language's
+    /// <see cref="PromptLanguage.OutOfCategory"/>, and the caller then solves again under the full contract.
+    /// </summary>
+    IOutputContract? Scoped(string nodeId);
 }

@@ -62,7 +62,7 @@ public sealed class ResolverLiveTests
                 options:
                   - {id: query, kind: answer, label: weather query, description: will it rain tomorrow, text: weather_query}
             """).Root;
-        var task = new TaskDefinition("live", new TreeAnswerContract(tree), tree, new TaskPolicy { Thresholds = new([0.8], 0.7), FallbackScope = FallbackScope.Path });
+        var task = new TaskDefinition("live", new TreeAnswerContract(tree), tree, new TaskPolicy { Thresholds = new([0.8], 0.7), FallbackScope = FallbackScope.Path }, PromptLanguage.Korean);
 
         var alarm = await resolver.ResolveAsync(task, "please wake me up at 6 tomorrow", cancellationToken: TestContext.Current.CancellationToken);
         var weather = await resolver.ResolveAsync(task, "is it going to rain this afternoon?", cancellationToken: TestContext.Current.CancellationToken);

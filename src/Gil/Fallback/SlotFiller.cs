@@ -16,11 +16,10 @@ public sealed record SlotFillResult(string? Output, double Energy, string? Faile
 /// <param name="maxAttempts">Calls before giving up on missing blanks.</param>
 public sealed partial class SlotFiller(CallRecorder recorder, int maxAttempts = 2)
 {
-    private const string System = "너는 빈칸을 채운다. 반드시 JSON 객체 하나만 출력한다.";
-
-    public async Task<SlotFillResult> FillAsync(string state, Habit habit, string traceId, CancellationToken cancellationToken = default)
+    public async Task<SlotFillResult> FillAsync(string state, Habit habit, PromptLanguage language, string traceId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(habit);
+        ArgumentNullException.ThrowIfNull(language);
         var template = habit.Template ?? "";
         var values = habit.Slots.Where(s => s.Fixed is not null).ToDictionary(s => s.Name, s => s.Fixed!);
         var wanted = habit.Slots.Where(s => s.Fixed is null).ToList();
@@ -36,7 +35,7 @@ public sealed partial class SlotFiller(CallRecorder recorder, int maxAttempts = 
         {
             var request = new ChatRequest
             {
-                Messages = [new ChatMessage("system", System), new ChatMessage("user", Prompt(state, template, wanted, complaint))],
+                Messages = [new ChatMessage("system", language.SlotSystem), new ChatMessage("user", Prompt(state, template, wanted, complaint, language))],
                 MaxTokens = 256,
             };
             var call = await recorder.CompleteAsync(request, "slot_fill", traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -44,7 +43,7 @@ public sealed partial class SlotFiller(CallRecorder recorder, int maxAttempts = 
             var parsed = Parse(call.Content);
             if (parsed is null)
             {
-                complaint = "JSON 으로 읽히지 않았다";
+                complaint = language.SlotNotJson;
                 continue;
             }
 
@@ -59,24 +58,26 @@ public sealed partial class SlotFiller(CallRecorder recorder, int maxAttempts = 
                 return new SlotFillResult(Substitute(template, values), energy, null);
             }
 
-            complaint = $"빠진 빈칸: [{string.Join(", ", missing)}]";
+            complaint = PromptText.Fill(language.SlotMissing, ("blanks", string.Join(", ", missing)));
         }
 
-        return new SlotFillResult(null, energy, $"빈칸을 채우지 못했다 — [{string.Join(", ", missing)}]");
+        return new SlotFillResult(null, energy, PromptText.Fill(language.SlotFailed, ("blanks", string.Join(", ", missing))));
     }
 
-    private static string Prompt(string state, string template, IEnumerable<Slot> wanted, string? complaint)
+    private static string Prompt(string state, string template, IEnumerable<Slot> wanted, string? complaint, PromptLanguage language)
     {
         var listed = string.Join('\n', wanted.Select(s => $"- \"{s.Name}\": {s.Instruction}"));
         var parts = new List<string>
         {
-            $"<입력>\n{state}\n</입력>", "", $"아래 틀의 빈칸을 채운다.\n틀: {template}", "", $"채울 빈칸:\n{listed}", "",
-            "빈칸 이름을 키로 하는 JSON 객체 하나만 출력하라.",
+            PromptText.Fill(language.Input, ("state", state)), "",
+            PromptText.Fill(language.SlotTemplate, ("template", template)), "",
+            PromptText.Fill(language.SlotBlanks, ("blanks", listed)), "",
+            language.SlotOutput,
         };
         if (complaint is not null)
         {
             parts.Add("");
-            parts.Add($"직전 응답 문제: {complaint}. 다시 답하라.");
+            parts.Add(PromptText.Fill(language.SlotRetry, ("reason", complaint)));
         }
 
         return string.Join('\n', parts);

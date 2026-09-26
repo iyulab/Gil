@@ -53,6 +53,7 @@ internal static class ReadmeExample
             shadowEvidence: store);
 
         var tree = OntologyYaml.Load("support.yaml").Root;
+        // The last argument is the language support.yaml is written in: every prompt the task sends is worded in it.
         var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new TaskPolicy
         {
             // No defaults: a judgment's probability is not a calibrated accuracy, and the right threshold depends on the task.
@@ -60,7 +61,7 @@ internal static class ReadmeExample
             FallbackScope = FallbackScope.Path,
             // Similarity scales differ between embedding models, so this has no default either; without it memory is off.
             MemoryThreshold = 0.9,
-        });
+        }, PromptLanguage.English);
 
         var result = await resolver.ResolveAsync(task, "I lost my card");
         Console.WriteLine($"{result.Mode}: {result.Output}");

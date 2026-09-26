@@ -340,7 +340,7 @@ public sealed class ResolverTests
         // Free-answer tasks can gain nothing from judgments (their fallback rarely writes the organisation's answer;
         // accuracy comes from memory), so a task may be defined with a bare root: nothing to judge, nothing to pay.
         var bare = OntologyYaml.Parse("id: root").Root;
-        var task = new TaskDefinition("support", new TextContract(), bare, new TaskPolicy { Thresholds = Strict, MemoryThreshold = 0.9 });
+        var task = new TaskDefinition("support", new TextContract(), bare, new TaskPolicy { Thresholds = Strict, MemoryThreshold = 0.9 }, PromptLanguage.Korean);
         var rig = new Rig(Judgments(), "Your parcel ships tomorrow.");
         rig.Memory.Items.Add(("refund please", "Refunds take five days.", 0.95));
 
@@ -417,7 +417,7 @@ public sealed class ResolverTests
             MemoryThreshold = memoryThreshold,
             ExplorationRate = explorationRate,
             Shadows = shadows,
-        });
+        }, PromptLanguage.Korean);
 
     private sealed class FixedRandom(double value) : Random
     {
@@ -473,7 +473,7 @@ public sealed class ResolverTests
 
         public List<IReadOnlyList<Candidate>> Shown { get; } = [];
 
-        public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
+        public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, PromptLanguage language, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
         {
             Shown.Add(candidates);
             var (choice, confidence) = script[_next++];

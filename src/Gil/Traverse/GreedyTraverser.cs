@@ -20,6 +20,7 @@ public sealed class GreedyTraverser(IJudge judge)
     /// <param name="state">The input to classify.</param>
     /// <param name="root">The tree to walk.</param>
     /// <param name="thresholds">The task's acceptance thresholds.</param>
+    /// <param name="language">The task's language, which every judgment is asked in.</param>
     /// <param name="traceId">The request every judgment is recorded under.</param>
     /// <param name="shadows">
     /// Per node, known answers that are not habits yet. They are shown beside a node's habits; choosing one defers to
@@ -30,6 +31,7 @@ public sealed class GreedyTraverser(IJudge judge)
         string state,
         Node root,
         Thresholds thresholds,
+        PromptLanguage language,
         string traceId,
         IReadOnlyDictionary<string, IReadOnlyList<Candidate>>? shadows = null,
         CancellationToken cancellationToken = default)
@@ -59,7 +61,7 @@ public sealed class GreedyTraverser(IJudge judge)
                 shown.AddRange(extra);
             }
 
-            var judgment = await judge.JudgeAsync(state, shown, traceId, current.Id, layer, cancellationToken).ConfigureAwait(false);
+            var judgment = await judge.JudgeAsync(state, shown, language, traceId, current.Id, layer, cancellationToken).ConfigureAwait(false);
             calls++;
             energy += judgment.Call.Energy;
 

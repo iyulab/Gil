@@ -91,8 +91,16 @@ public sealed record TaskPolicy
     public IReadOnlySet<string> NonAnswers { get; init; } = new HashSet<string>();
 }
 
-/// <summary>A task: its output contract, its decision tree and its policy.</summary>
-public sealed record TaskDefinition(string Name, IOutputContract Contract, Node Ontology, TaskPolicy Policy);
+/// <summary>A task: its output contract, its decision tree, its policy and the language its tree is written in.</summary>
+/// <param name="Name">Scopes memory, statistics and telemetry.</param>
+/// <param name="Contract">The shape every answer must have.</param>
+/// <param name="Ontology">The decision tree.</param>
+/// <param name="Policy">How requests are resolved.</param>
+/// <param name="Language">
+/// The wording every model call for this task is made in. There is no default: "none of these" must be in the same
+/// language as the tree's candidates for out-of-scope input to be rejected, and only the task knows its tree's language.
+/// </param>
+public sealed record TaskDefinition(string Name, IOutputContract Contract, Node Ontology, TaskPolicy Policy, PromptLanguage Language);
 
 /// <summary>The nearest remembered request and the answer it confirmed.</summary>
 public sealed record MemoryMatch(string Source, double Similarity, string Answer);

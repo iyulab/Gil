@@ -32,7 +32,7 @@ public sealed class GreedyTraverserTests
     {
         var judge = new Scripted(("quality", 0.9), ("dimension", 0.9), ("dim-01", 0.9));
 
-        var result = await new GreedyTraverser(judge).TraverseAsync("parts are too long", Root, Loose, "t", cancellationToken: TestContext.Current.CancellationToken);
+        var result = await new GreedyTraverser(judge).TraverseAsync("parts are too long", Root, Loose, PromptLanguage.Korean, "t", cancellationToken: TestContext.Current.CancellationToken);
 
         result.Habit!.Id.Should().Be("dim-01");
         result.Path.Select(s => (s.Node, s.Outcome)).Should().Equal(("root", "accept"), ("quality", "accept"), ("dimension", "accept"));
@@ -45,7 +45,7 @@ public sealed class GreedyTraverserTests
     {
         var judge = new Scripted(("work", 0.95));
 
-        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, Loose, "t", cancellationToken: TestContext.Current.CancellationToken);
+        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, Loose, PromptLanguage.Korean, "t", cancellationToken: TestContext.Current.CancellationToken);
 
         result.ExitReason.Should().Be("skip");
         result.Path[^1].Should().Match<PathStep>(s => s.Node == "work" && s.Outcome == "skip" && s.Energy == 0);
@@ -61,7 +61,7 @@ public sealed class GreedyTraverserTests
     {
         var judge = new Scripted((choice, confidence)) { Trusted = trusted };
 
-        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, Loose, "t", cancellationToken: TestContext.Current.CancellationToken);
+        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, Loose, PromptLanguage.Korean, "t", cancellationToken: TestContext.Current.CancellationToken);
 
         result.ExitReason.Should().Be(reason);
         result.Path.Single().Should().Match<PathStep>(s => s.Outcome == "exit" && s.Chosen == null);
@@ -74,7 +74,7 @@ public sealed class GreedyTraverserTests
     {
         var judge = new Scripted(("quality", 0.95), ("dimension", 0.95), ("dim-01", 0.6));
 
-        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, new Thresholds([0.9], Leaf: 0.7), "t", cancellationToken: TestContext.Current.CancellationToken);
+        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, new Thresholds([0.9], Leaf: 0.7), PromptLanguage.Korean, "t", cancellationToken: TestContext.Current.CancellationToken);
 
         result.ExitReason.Should().Be("low_confidence");
         result.Path[^1].Node.Should().Be("dimension");
@@ -86,7 +86,7 @@ public sealed class GreedyTraverserTests
         var judge = new Scripted(("quality", 0.9), ("dimension", 0.9), ("shadow-1", 0.9));
         var shadows = new Dictionary<string, IReadOnlyList<Candidate>> { ["dimension"] = [new Candidate("shadow-1", "known", "a known answer", "Known.")] };
 
-        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, Loose, "t", shadows, TestContext.Current.CancellationToken);
+        var result = await new GreedyTraverser(judge).TraverseAsync("x", Root, Loose, PromptLanguage.Korean, "t", shadows, TestContext.Current.CancellationToken);
 
         result.ExitReason.Should().Be("shadow");
         result.Path[^1].Should().Match<PathStep>(s => s.Outcome == "defer" && s.Chosen == "shadow-1");
@@ -113,7 +113,7 @@ public sealed class GreedyTraverserTests
             foreach (var expected in @case.GetProperty("expected").EnumerateArray())
             {
                 var thresholds = new Thresholds([.. expected.GetProperty("per_layer").EnumerateArray().Select(v => v.GetDouble())], expected.GetProperty("leaf").GetDouble());
-                var result = await new GreedyTraverser(judge).TraverseAsync("", root, thresholds, @case.GetProperty("trace_id").GetString()!, cancellationToken: TestContext.Current.CancellationToken);
+                var result = await new GreedyTraverser(judge).TraverseAsync("", root, thresholds, PromptLanguage.Korean, @case.GetProperty("trace_id").GetString()!, cancellationToken: TestContext.Current.CancellationToken);
 
                 var because = $"{@case.GetProperty("trace_id").GetString()} at {thresholds.Leaf}";
                 result.Path.Select(s => (s.Node, s.Chosen, s.Outcome)).Should().Equal(
@@ -136,7 +136,7 @@ public sealed class GreedyTraverserTests
 
         public List<IReadOnlyList<Candidate>> Shown { get; } = [];
 
-        public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
+        public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, PromptLanguage language, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
         {
             Shown.Add(candidates);
             var (choice, confidence) = script[_next++];

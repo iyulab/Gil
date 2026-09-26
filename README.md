@@ -82,6 +82,7 @@ var resolver = new Resolver(
     shadowEvidence: store);
 
 var tree = OntologyYaml.Load("support.yaml").Root;
+// The last argument is the language support.yaml is written in: every prompt the task sends is worded in it.
 var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new TaskPolicy
 {
     // No defaults: a judgment's probability is not a calibrated accuracy, and the right threshold depends on the task.
@@ -89,7 +90,7 @@ var task = new TaskDefinition("support", new TreeAnswerContract(tree), tree, new
     FallbackScope = FallbackScope.Path,
     // Similarity scales differ between embedding models, so this has no default either; without it memory is off.
     MemoryThreshold = 0.9,
-});
+}, PromptLanguage.English);
 
 var result = await resolver.ResolveAsync(task, "I lost my card");
 Console.WriteLine($"{result.Mode}: {result.Output}");
@@ -98,6 +99,13 @@ await resolver.FeedbackAsync(task, result.TraceId, correct: true);
 
 A task whose answers are free text may gain nothing from judgments; define it with a bare root (`id: root`) and
 it goes from memory straight to the fallback without a judgment call.
+
+Every task declares the language its tree is written in, and every prompt the task sends — judgments, the
+fallback, slot filling, the contract's instructions and the violations fed back on a retry — is worded in it. There
+is no default for the same reason as the thresholds: "none of these" and the tree's candidates must share a language,
+or out-of-scope requests stop being rejected. Two languages are built in: `PromptLanguage.Korean`, the wording the
+behaviour was measured with (kept as measured), and `PromptLanguage.English`. To change a piece of the wording, start
+from one of them, for example `PromptLanguage.English with { NoneOfThese = "Not applicable" }`.
 
 Promotion never edits the tree by itself. Whoever operates the task runs a round, reviews the result against the
 authored YAML and applies what they accept:

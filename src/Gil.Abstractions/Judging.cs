@@ -38,6 +38,7 @@ public interface IJudge
     Task<Judgment> JudgeAsync(
         string state,
         IReadOnlyList<Candidate> candidates,
+        PromptLanguage language,
         string traceId,
         string? nodeId = null,
         int? layer = null,

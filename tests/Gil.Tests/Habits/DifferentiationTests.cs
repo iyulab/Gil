@@ -73,7 +73,7 @@ public sealed class DifferentiationTests
             new PromotionCandidate("t12", "x", "root", "weather", "wrong", null, 1),
         };
 
-        var signals = Differentiation.Anchored(Tree, candidates, Contract, minSupport: 2, never: new HashSet<string> { "해당 없음" });
+        var signals = Differentiation.Anchored(Tree, candidates, Contract, PromptLanguage.Korean, minSupport: 2, never: new HashSet<string> { "해당 없음" });
 
         signals.Should().BeEquivalentTo(
             new[]
@@ -88,7 +88,7 @@ public sealed class DifferentiationTests
     [Fact]
     public void Without_a_narrowable_contract_no_child_can_take_an_answer()
     {
-        var signals = Differentiation.Anchored(Tree, [Correct("t1", "root", "card_lost"), Correct("t2", "root", "card_lost")], new TextContract(), minSupport: 2);
+        var signals = Differentiation.Anchored(Tree, [Correct("t1", "root", "card_lost"), Correct("t2", "root", "card_lost")], new TextContract(), PromptLanguage.Korean, minSupport: 2);
 
         signals.Single().Kind.Should().Be(DifferentiationKind.Orphan);
     }
@@ -120,7 +120,7 @@ public sealed class DifferentiationTests
             Same(Differentiation.Capacity(tree), expected.GetProperty("capacity_0"), $"{task} capacity");
             Same(Differentiation.Capacity(tree, headroom: 2), expected.GetProperty("capacity_2"), $"{task} capacity with headroom");
             Same(
-                Differentiation.Anchored(tree, candidates, contract, run.GetProperty("n_min").GetInt32(), never),
+                Differentiation.Anchored(tree, candidates, contract, PromptLanguage.Korean, run.GetProperty("n_min").GetInt32(), never),
                 expected.GetProperty("anchored"),
                 $"{task} anchored");
             runs++;

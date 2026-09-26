@@ -57,7 +57,7 @@ public sealed class Resolver(
         var shadows = task.Policy.Shadows && shadowEvidence is not null
             ? ShadowIndex.Build(shadowEvidence.ShadowEvidence(task.Name), task.Ontology, task.Policy.NonAnswers)
             : null;
-        var traversed = await traverser.TraverseAsync(state, task.Ontology, task.Policy.Thresholds, traceId, shadows, cancellationToken).ConfigureAwait(false);
+        var traversed = await traverser.TraverseAsync(state, task.Ontology, task.Policy.Thresholds, task.Language, traceId, shadows, cancellationToken).ConfigureAwait(false);
         energy += traversed.Energy;
         var confidence = traversed.Path.Count > 0 ? traversed.Path[^1].P : 0;
         string? output;
@@ -65,7 +65,7 @@ public sealed class Resolver(
         string? explored = null;
         if (traversed.Habit is Habit habit)
         {
-            (output, mode, var cost) = await FromHabitAsync(habit, state, traceId, cancellationToken).ConfigureAwait(false);
+            (output, mode, var cost) = await FromHabitAsync(task, habit, state, traceId, cancellationToken).ConfigureAwait(false);
             energy += cost;
             if (output is null && habit.Kind == HabitKind.Template && task.Policy.AllowFallback)
             {
@@ -180,24 +180,25 @@ public sealed class Resolver(
             return (null, 0);
         }
 
-        var check = await fallback.GenerateAsync(state, task.Contract, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var check = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
         var agreed = check.Output is not null && output is not null && check.Output.Trim() == output.Trim();
         statistics?.RecordOutcome(task.Name, habit.Id, new HabitCounts(Explored: 1, Disputed: agreed ? 0 : 1));
         return (check.Output?.Trim(), check.Energy);
     }
 
-    private async Task<(string? Output, string Mode, double Energy)> FromHabitAsync(Habit habit, string state, string traceId, CancellationToken cancellationToken)
+    private async Task<(string? Output, string Mode, double Energy)> FromHabitAsync(TaskDefinition task, Habit habit, string state, string traceId, CancellationToken cancellationToken)
     {
         switch (habit.Kind)
         {
             case HabitKind.Answer:
                 return (habit.Text, "habit/answer", 0);
             case HabitKind.Template:
-                var filled = await slots.FillAsync(state, habit, traceId, cancellationToken).ConfigureAwait(false);
+                var filled = await slots.FillAsync(state, habit, task.Language, traceId, cancellationToken).ConfigureAwait(false);
                 return (filled.Output, "habit/template", filled.Energy);
             default:
                 // A procedure is handed to generation as instructions; there is no procedure executor.
-                var generated = await fallback.GenerateAsync($"{state}\n\n절차: {habit.Steps}", new TextContract(), traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+                var procedure = $"{state}\n\n{PromptText.Fill(task.Language.Procedure, ("steps", habit.Steps ?? ""))}";
+                var generated = await fallback.GenerateAsync(procedure, new TextContract(), task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
                 return (generated.Output, "habit/procedure", generated.Energy);
         }
     }
@@ -211,19 +212,19 @@ public sealed class Resolver(
             : null;
         if (scoped is null)
         {
-            var result = await fallback.GenerateAsync(state, task.Contract, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var result = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
             return (result.Output, result.Energy);
         }
 
-        var narrow = await fallback.GenerateAsync(state, scoped.Contract, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (narrow.Output is null || narrow.Output != scoped.Escape)
+        var narrow = await fallback.GenerateAsync(state, scoped, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (narrow.Output is null || narrow.Output != task.Language.OutOfCategory)
         {
             return (narrow.Output, narrow.Energy);
         }
 
         // The model says the answer is outside the confirmed category: the judgment above was wrong. Solve in full,
         // without the (wrong) path as context.
-        var full = await fallback.GenerateAsync(state, task.Contract, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var full = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
         return (full.Output, narrow.Energy + full.Energy);
     }
 

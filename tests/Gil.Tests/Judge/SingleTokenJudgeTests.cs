@@ -43,7 +43,7 @@ public sealed class SingleTokenJudgeTests
     {
         var (judge, model, sink) = Judge("C", new() { OrderSeed = null });
 
-        var judgment = await judge.JudgeAsync("the press stopped", Candidates, "t1", "root", 1, TestContext.Current.CancellationToken);
+        var judgment = await judge.JudgeAsync("the press stopped", Candidates, PromptLanguage.Korean, "t1", "root", 1, TestContext.Current.CancellationToken);
 
         judgment.Choice.Should().Be("equipment"); // no shuffling: B quality, C equipment, D delivery
         judgment.Trusted.Should().BeTrue();
@@ -62,7 +62,7 @@ public sealed class SingleTokenJudgeTests
     {
         var (judge, _, sink) = Judge("A", new() { OrderSeed = null });
 
-        var judgment = await judge.JudgeAsync("unrelated", Candidates, "t1", cancellationToken: TestContext.Current.CancellationToken);
+        var judgment = await judge.JudgeAsync("unrelated", Candidates, PromptLanguage.Korean, "t1", cancellationToken: TestContext.Current.CancellationToken);
 
         (judgment.Choice, judgment.NoneProb).Should().Be((null, 1.0));
         sink.Calls.Single().Outcome.Should().Be("exit");
@@ -75,15 +75,15 @@ public sealed class SingleTokenJudgeTests
         var (first, firstModel, _) = Judge("B", options);
         var (second, secondModel, _) = Judge("B", options);
 
-        await first.JudgeAsync("an earlier request", Candidates, "p", "root", cancellationToken: TestContext.Current.CancellationToken);
-        await first.JudgeAsync("same request", Candidates, "t", "root", cancellationToken: TestContext.Current.CancellationToken);
-        await second.JudgeAsync("same request", Candidates.Reverse().ToArray(), "t-other-run", "root", cancellationToken: TestContext.Current.CancellationToken);
+        await first.JudgeAsync("an earlier request", Candidates, PromptLanguage.Korean, "p", "root", cancellationToken: TestContext.Current.CancellationToken);
+        await first.JudgeAsync("same request", Candidates, PromptLanguage.Korean, "t", "root", cancellationToken: TestContext.Current.CancellationToken);
+        await second.JudgeAsync("same request", Candidates.Reverse().ToArray(), PromptLanguage.Korean, "t-other-run", "root", cancellationToken: TestContext.Current.CancellationToken);
 
         firstModel.Requests[^1].Messages[^1].Content.Should().Be(secondModel.Requests[^1].Messages[^1].Content);
         var orders = new HashSet<string>();
         for (var i = 0; i < 12; i++)
         {
-            await first.JudgeAsync($"request {i}", Candidates, "x", "root", cancellationToken: TestContext.Current.CancellationToken);
+            await first.JudgeAsync($"request {i}", Candidates, PromptLanguage.Korean, "x", "root", cancellationToken: TestContext.Current.CancellationToken);
             orders.Add(string.Join(",", firstModel.Requests[^1].Messages[^1].Content.Split('\n').Where(l => l.Contains(" — ", StringComparison.Ordinal))));
         }
 

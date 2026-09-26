@@ -4,16 +4,6 @@ using Gil.Llm;
 
 namespace Gil.Judge;
 
-/// <summary>The wording of a judgment prompt. The defaults are the wording the runtime's behaviour was measured with.</summary>
-public sealed record JudgePromptTemplate
-{
-    public string System { get; init; } = "너는 분류기다. 반드시 라벨 하나만 출력한다.";
-    public string NoneOfThese { get; init; } = "해당 없음";
-
-    /// <summary>Placeholders: {state}, {choices}.</summary>
-    public string User { get; init; } = "<입력>\n{state}\n</입력>\n\n위 입력이 다음 중 어디에 해당하는가?\n{choices}\n라벨 하나만 답하라.";
-}
-
 /// <summary>Settings for <see cref="SingleTokenJudge"/>.</summary>
 public sealed record SingleTokenJudgeOptions
 {
@@ -30,8 +20,6 @@ public sealed record SingleTokenJudgeOptions
     public int? OrderSeed { get; init; }
 
     public int TopLogprobs { get; init; } = 20;
-
-    public JudgePromptTemplate Prompt { get; init; } = new();
 }
 
 /// <summary>
@@ -45,12 +33,14 @@ public sealed class SingleTokenJudge(CallRecorder recorder, SingleTokenJudgeOpti
     public async Task<Judgment> JudgeAsync(
         string state,
         IReadOnlyList<Candidate> candidates,
+        PromptLanguage language,
         string traceId,
         string? nodeId = null,
         int? layer = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(language);
         var ordered = Order(state, candidates, nodeId);
         var none = LabelScheme.NoneLabel(_options.Scheme);
         var labels = LabelScheme.Labels(_options.Scheme, ordered.Count, none);
@@ -59,8 +49,8 @@ public sealed class SingleTokenJudge(CallRecorder recorder, SingleTokenJudgeOpti
         {
             Messages =
             [
-                new ChatMessage("system", _options.Prompt.System),
-                new ChatMessage("user", UserPrompt(state, ordered, labels, none)),
+                new ChatMessage("system", language.JudgeSystem),
+                new ChatMessage("user", UserPrompt(state, ordered, labels, none, language)),
             ],
             MaxTokens = 1,
             Temperature = 0,
@@ -86,7 +76,7 @@ public sealed class SingleTokenJudge(CallRecorder recorder, SingleTokenJudgeOpti
                     Outcome = choice is null ? "exit" : "accept",
                     Candidates =
                     [
-                        new ShownCandidate(null, none, _options.Prompt.NoneOfThese, null, null),
+                        new ShownCandidate(null, none, language.NoneOfThese, null, null),
                         .. labels.Select(label => new ShownCandidate(byLabel[label].Id, label, byLabel[label].Label, byLabel[label].Description, byLabel[label].Answer)),
                     ],
                 };
@@ -118,11 +108,11 @@ public sealed class SingleTokenJudge(CallRecorder recorder, SingleTokenJudgeOpti
         return [.. candidates.OrderBy(c => Hash(request + "\u001d" + c.Id), StringComparer.Ordinal)];
     }
 
-    private string UserPrompt(string state, IReadOnlyList<Candidate> ordered, IReadOnlyList<string> labels, string none)
+    private static string UserPrompt(string state, IReadOnlyList<Candidate> ordered, IReadOnlyList<string> labels, string none, PromptLanguage language)
     {
         var listed = labels.Zip(ordered, (label, c) => $"{label}. {c.Label} — {c.Description}");
-        var choices = string.Join('\n', [$"{none}. {_options.Prompt.NoneOfThese}", .. listed]);
-        return _options.Prompt.User.Replace("{state}", state, StringComparison.Ordinal).Replace("{choices}", choices, StringComparison.Ordinal);
+        var choices = string.Join('\n', [$"{none}. {language.NoneOfThese}", .. listed]);
+        return PromptText.Fill(language.Input, ("state", state)) + "\n\n" + PromptText.Fill(language.JudgeQuestion, ("choices", choices));
     }
 
     private static string? Choice(LabelDistribution distribution, string none, Dictionary<string, Candidate> byLabel) =>

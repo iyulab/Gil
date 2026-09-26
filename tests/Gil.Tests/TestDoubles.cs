@@ -52,7 +52,7 @@ internal sealed class RecordingStatistics : IHabitStatistics
 /// </summary>
 internal sealed class RecordedJudge(JsonElement byNode) : IJudge
 {
-    public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
+    public Task<Judgment> JudgeAsync(string state, IReadOnlyList<Candidate> candidates, PromptLanguage language, string traceId, string? nodeId = null, int? layer = null, CancellationToken cancellationToken = default)
     {
         var r = byNode.GetProperty(nodeId!);
         var probs = r.GetProperty("probs").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetDouble());

@@ -21,7 +21,7 @@ public sealed class SlotFillerTests
     {
         var model = new ScriptedModel("""{"item": "the form"}""");
 
-        var filled = await new SlotFiller(new CallRecorder(model, new EnergyModel(1, 0, 0, 0))).FillAsync("I sent the form", Received, "t", TestContext.Current.CancellationToken);
+        var filled = await new SlotFiller(new CallRecorder(model, new EnergyModel(1, 0, 0, 0))).FillAsync("I sent the form", Received, PromptLanguage.Korean, "t", TestContext.Current.CancellationToken);
 
         (filled.Output, filled.FailedReason).Should().Be(("the form received by HR.", null));
         model.Requests.Should().ContainSingle().Which.Messages[1].Content.Should().Contain("\"item\"").And.NotContain("\"team\"");
@@ -32,7 +32,7 @@ public sealed class SlotFillerTests
     {
         var model = new ScriptedModel("""{"other": "x"}""");
 
-        var filled = await new SlotFiller(new CallRecorder(model, new EnergyModel(1, 0, 0, 0))).FillAsync("I sent the form", Received, "t", TestContext.Current.CancellationToken);
+        var filled = await new SlotFiller(new CallRecorder(model, new EnergyModel(1, 0, 0, 0))).FillAsync("I sent the form", Received, PromptLanguage.Korean, "t", TestContext.Current.CancellationToken);
 
         filled.Output.Should().BeNull();
         filled.FailedReason.Should().Contain("item");

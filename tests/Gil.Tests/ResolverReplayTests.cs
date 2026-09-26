@@ -59,7 +59,8 @@ public sealed class ResolverReplayTests : IDisposable
                 Thresholds = thresholds,
                 FallbackScope = fixture.GetProperty("fallback_scope").GetString() == "path" ? FallbackScope.Path : FallbackScope.Full,
                 MemoryThreshold = fixture.TryGetProperty("memory_threshold", out var threshold) ? threshold.GetDouble() : null,
-            });
+            },
+            PromptLanguage.Korean);
         var attempts = fixture.GetProperty("fallback_max_attempts").GetInt32();
 
         // A run with memory carries the vectors its embedding model returned and the requests where memory failed; the

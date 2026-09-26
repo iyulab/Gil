@@ -55,18 +55,21 @@ public static class Differentiation
     /// <param name="root">The task's tree.</param>
     /// <param name="candidates">The task's promotion evidence (<see cref="IPromotionEvidenceSource.PromotionCandidates"/>).</param>
     /// <param name="contract">The task's output contract; a narrowable one tells reanchor from orphan.</param>
+    /// <param name="language">The task's language; its escape tells a narrowed contract's refusal from an answer.</param>
     /// <param name="minSupport">Repetitions below this are chance.</param>
     /// <param name="never">Answers that mean there is no answer.</param>
     public static IReadOnlyList<DifferentiationSignal> Anchored(
         Node root,
         IReadOnlyList<PromotionCandidate> candidates,
         IOutputContract contract,
+        PromptLanguage language,
         int minSupport,
         IReadOnlySet<string>? never = null)
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(candidates);
         ArgumentNullException.ThrowIfNull(contract);
+        ArgumentNullException.ThrowIfNull(language);
 
         // Where each answer lives; a text held twice counts as the later node, as the tree is walked.
         var home = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -109,7 +112,7 @@ public static class Differentiation
 
                 var (kind, target) = home.TryGetValue(output, out var holder)
                     ? (DifferentiationKind.Missed, holder)
-                    : Takers(node, output, contract) is [var only] ? (DifferentiationKind.Reanchor, only) : (DifferentiationKind.Orphan, (string?)null);
+                    : Takers(node, output, contract, language) is [var only] ? (DifferentiationKind.Reanchor, only) : (DifferentiationKind.Orphan, (string?)null);
                 signals.Add(new DifferentiationSignal(kind, group.Key, output, target, sources.Count, sources));
             }
         }
@@ -118,9 +121,9 @@ public static class Differentiation
     }
 
     /// <summary>The children whose narrowed contract accepts the answer as an answer, not as its escape.</summary>
-    private static List<string> Takers(Node node, string output, IOutputContract contract) =>
+    private static List<string> Takers(Node node, string output, IOutputContract contract, PromptLanguage language) =>
         contract is IScopableContract scopable
             ? [.. node.Children.Where(child => scopable.Scoped(child.Id) is { } scoped
-                && output != scoped.Escape && scoped.Contract.Validate(output) is null).Select(child => child.Id)]
+                && output != language.OutOfCategory && scoped.Validate(output, language) is null).Select(child => child.Id)]
             : [];
 }
