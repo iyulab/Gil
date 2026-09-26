@@ -5,7 +5,8 @@ single-token judgments; only what the tree cannot settle goes to full generation
 tree already confirmed. Answers that keep coming back can be promoted into habits, behind a flag and a review gate.
 
 **Status: early.** The library is being built from a specification whose behaviour was measured first in a
-research harness. Published on NuGet as `Gil` (with `Gil.Abstractions`); the API may still change within 0.x.
+research harness. Published on NuGet as `Gil` (with `Gil.Abstractions`); the API may still change within 0.x —
+[CHANGELOG.md](https://github.com/iyulab/Gil/blob/main/CHANGELOG.md) lists each change and what to do about it.
 
 ## When to use it
 
