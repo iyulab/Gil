@@ -188,7 +188,12 @@ your organisation knows, it arrives as a correction instead; set `FromCorrection
 corrections too. A round that proposes nothing says so only by an empty list.
 
 `Deactivation.Propose` and `Differentiation.Capacity` / `Differentiation.Anchored` produce the other two review
-lists: habits to retire, and nodes to split or categories to add.
+lists: habits to retire, and nodes to split or categories to add. Record what the reviewer decided on each item, with
+the reason when there is one — the log then shows what was accepted and rejected, and what reviewing the task costs:
+
+```csharp
+store.RecordReview(task.Name, ReviewKind.Promotion, review.Proposals[0].Habit.Id, ReviewDecision.Rejected, "same as billing-refund");
+```
 
 Costs are only as real as the coefficients. A self-hosted server reports how long each call took; once a few hundred
 calls are recorded, fit the coefficients to those times and price with them from then on (for an API, use its
@@ -200,10 +205,11 @@ var fitted = EnergyModel.Fit(store.ServerTimeSamples("my-model"));
 
 Accuracy is reported, not promised. `Stats` reads it off the log — per mode, on the requests that got feedback, with a
 95% interval — together with the share of requests habits and memory answered and the cost per request over time
-(priced again with the fitted coefficients, so early and late requests compare in one unit):
+(priced again with the fitted coefficients, so early and late requests compare in one unit). Given the tree, it also
+counts misroutes: requests whose confirmed answer lies outside the category the tree sent them to.
 
 ```csharp
-var stats = store.Stats(task.Name, window: 100, pricing: fitted);
+var stats = store.Stats(task.Name, window: 100, pricing: fitted, tree: tree);
 ```
 
 ## Build and test

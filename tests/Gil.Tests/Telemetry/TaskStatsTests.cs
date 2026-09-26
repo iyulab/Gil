@@ -62,6 +62,44 @@ public sealed class TaskStatsTests : IDisposable
     }
 
     [Fact]
+    public void Misroutes_count_confirmed_answers_outside_the_category_a_request_was_routed_to()
+    {
+        var tree = Gil.Ontology.OntologyYaml.Parse("""
+            id: root
+            children:
+            - id: billing
+              options:
+              - id: refund
+                text: Refund.
+            - id: cards
+              options:
+              - id: block
+                text: Block.
+            """).Root;
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "m.sqlite"));
+        var n = 0;
+        void Request(string mode, string[] nodes, string? output, string verdict, string? correction = null)
+        {
+            var id = $"t{n++:D3}";
+            store.OpenTrace(id, "support", "s");
+            var path = nodes.Select((node, i) => new PathStep(node, i + 1, null, 0.9, "accept", new Dictionary<string, double>(), 1)).ToList();
+            store.CloseTrace(id, new TraceOutcome { Mode = mode, Energy = 1, Output = output, Path = path });
+            store.RecordFeedback(id, verdict, correction);
+        }
+
+        Request("habit/answer", ["root", "billing"], "Refund.", "correct");          // routed right
+        Request("partial", ["root", "billing"], "Refund.", "wrong", "Block.");        // answer lives under cards: misrouted
+        Request("fallback", ["root"], "Refund.", "wrong", "Block.");                  // stopped at the root: not a misroute
+        Request("partial", ["root", "cards"], "Block.", "wrong", "Something else.");  // answer not in the tree: not counted
+        Request("memory", [], "Refund.", "correct");                                  // no path: not counted
+
+        var misroutes = store.Stats("support", tree: tree).Misroutes!;
+
+        (misroutes.Judged, misroutes.Misrouted, misroutes.Rate).Should().Be((3, 1, 1 / 3.0));
+        store.Stats("support").Misroutes.Should().BeNull();
+    }
+
+    [Fact]
     public void Cost_per_request_is_a_trend_over_windows_and_can_be_priced_again_with_fitted_coefficients()
     {
         // Windows follow request order (time, then id); one fixed time keeps that order from depending on the wall clock.

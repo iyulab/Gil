@@ -75,9 +75,10 @@ internal static class ReadmeExample
         var review = Promotion.Review(tree, proposer.Propose(tree, store.PromotionCandidates(task.Name)));
         File.WriteAllText("support.proposed.yaml", review.After);
         store.RecordPromotionRound(task.Name, atIndex: store.Usage(task.Name).Total, review.Applied);
+        store.RecordReview(task.Name, ReviewKind.Promotion, review.Proposals[0].Habit.Id, ReviewDecision.Rejected, "same as billing-refund");
 
         var fitted = EnergyModel.Fit(store.ServerTimeSamples("my-model"));
 
-        var stats = store.Stats(task.Name, window: 100, pricing: fitted);
+        var stats = store.Stats(task.Name, window: 100, pricing: fitted, tree: tree);
     }
 }

@@ -12,7 +12,7 @@ namespace Gil.Telemetry;
 /// any language read these files directly, so columns may be added but never renamed or repurposed.
 /// Timestamps are UTC ISO-8601 strings; JSON columns keep non-ASCII text unescaped.
 /// </summary>
-public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IPromotionEvidenceSource, IPromotionLog, IHabitUsageSource, IDisposable
+public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IPromotionEvidenceSource, IPromotionLog, IReviewLog, IHabitUsageSource, IDisposable
 {
     internal const string Schema = """
         CREATE TABLE IF NOT EXISTS traces (
@@ -120,6 +120,15 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             expected_saving  REAL NOT NULL,
             added_cost       REAL NOT NULL,
             PRIMARY KEY (task, at_index, option_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS reviews (
+            task         TEXT NOT NULL,
+            reviewed_at  TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            item_id      TEXT NOT NULL,
+            decision     TEXT NOT NULL,
+            note         TEXT
         );
         """;
 
@@ -379,24 +388,36 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
     /// <paramref name="window"/> requests. Costs are the energy recorded with each request; pass
     /// <paramref name="pricing"/> to price every chat call again from its tokens instead — after fitting new
     /// coefficients, so that old and new requests are compared in the same unit. Embedding calls keep their recorded
-    /// energy either way.
+    /// energy either way. Pass the task's current <paramref name="tree"/> to also count misroutes (see
+    /// <see cref="MisrouteStats"/>).
     /// </summary>
-    public TaskStats Stats(string task, int window = 100, EnergyModel? pricing = null)
+    public TaskStats Stats(string task, int window = 100, EnergyModel? pricing = null, Node? tree = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(window, 1);
         var repriced = pricing is null ? null : Repriced(task, pricing);
         using var command = Command(
-"SELECT trace_id, mode, feedback_verdict, energy, json_extract(recall, '$.error') IS NOT NULL FROM traces "
+"SELECT trace_id, mode, feedback_verdict, energy, json_extract(recall, '$.error') IS NOT NULL, path, output, feedback_correction FROM traces "
             + "WHERE task = $task AND mode IS NOT NULL ORDER BY created_at, trace_id",
             [("$task", task)]);
         using var reader = command.ExecuteReader();
         var rows = new List<(string Mode, string? Verdict, double Cost)>();
+        var routed = new List<(string Anchor, string Answer)>();
         var memoryFailures = 0;
         while (reader.Read())
         {
             var cost = repriced is null ? (reader.IsDBNull(3) ? 0 : reader.GetDouble(3)) : repriced.GetValueOrDefault(reader.GetString(0));
             rows.Add((reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), cost));
             memoryFailures += reader.GetBoolean(4) ? 1 : 0;
+            var answer = reader.IsDBNull(2) ? null : reader.GetString(2) switch
+            {
+                "correct" => reader.IsDBNull(6) ? null : reader.GetString(6),
+                "wrong" => reader.IsDBNull(7) ? null : reader.GetString(7).Trim(),
+                _ => null,
+            };
+            if (answer is not null && !reader.IsDBNull(5) && LastNode(reader.GetString(5)) is string anchor)
+            {
+                routed.Add((anchor, answer));
+            }
         }
 
         var modes = rows
@@ -421,7 +442,37 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             total == 0 ? 0 : (double)rows.Count(r => r.Mode.StartsWith("habit/", StringComparison.Ordinal)) / total,
             total == 0 ? 0 : (double)rows.Count(r => r.Mode == "memory") / total,
             memoryFailures,
-            windows);
+            windows,
+            tree is null ? null : Misroutes(tree, routed));
+    }
+
+    private static MisrouteStats Misroutes(Node tree, IEnumerable<(string Anchor, string Answer)> routed)
+    {
+        // Where each answer lives: the node that holds it as an answer habit.
+        var home = new Dictionary<string, Node>(StringComparer.Ordinal);
+        foreach (var node in tree.Walk())
+        {
+            foreach (var habit in node.Habits.Where(h => h.Kind == HabitKind.Answer && h.Text is not null))
+            {
+                home.TryAdd(habit.Text!, node);
+            }
+        }
+
+        var judged = 0;
+        var misrouted = 0;
+        foreach (var (anchorId, answer) in routed)
+        {
+            if (!home.TryGetValue(answer, out var holder) || tree.Find(anchorId) is not Node anchor)
+            {
+                continue;
+            }
+
+            judged++;
+            misrouted += anchor.Find(holder.Id) is null ? 1 : 0;
+        }
+
+        var (low, high) = judged == 0 ? ((double?)null, (double?)null) : Wilson(misrouted, judged);
+        return new MisrouteStats(judged, misrouted, judged == 0 ? null : (double)misrouted / judged, low, high);
     }
 
     /// <summary>Each request's calls priced again: chat calls with <paramref name="pricing"/>, embedding calls as recorded.</summary>
@@ -624,6 +675,32 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         }
 
         return proposals;
+    }
+
+    public void RecordReview(string task, ReviewKind kind, string itemId, ReviewDecision decision, string? note = null) =>
+        Execute(
+            "INSERT INTO reviews (task, reviewed_at, kind, item_id, decision, note) VALUES ($task, $at, $kind, $item, $decision, $note)",
+            ("$task", task), ("$at", Now()), ("$kind", kind.ToString().ToLowerInvariant()), ("$item", itemId),
+            ("$decision", decision.ToString().ToLowerInvariant()), ("$note", note));
+
+    public IReadOnlyList<ReviewRecord> Reviews(string task)
+    {
+        using var command = Command(
+            "SELECT reviewed_at, kind, item_id, decision, note FROM reviews WHERE task = $task ORDER BY reviewed_at, rowid",
+            [("$task", task)]);
+        using var reader = command.ExecuteReader();
+        var reviews = new List<ReviewRecord>();
+        while (reader.Read())
+        {
+            reviews.Add(new ReviewRecord(
+                DateTimeOffset.Parse(reader.GetString(0), CultureInfo.InvariantCulture),
+                Enum.Parse<ReviewKind>(reader.GetString(1), ignoreCase: true),
+                reader.GetString(2),
+                Enum.Parse<ReviewDecision>(reader.GetString(3), ignoreCase: true),
+                reader.IsDBNull(4) ? null : reader.GetString(4)));
+        }
+
+        return reviews;
     }
 
     public IReadOnlyList<(int AtIndex, PromotionProposal Proposal)> PromotionHistory(string task)

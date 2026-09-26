@@ -16,6 +16,22 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Review_decisions_are_kept_in_order_with_their_notes()
+    {
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "r.sqlite"), clock: new FixedClock());
+        store.RecordReview("support", ReviewKind.Promotion, "promoted-abc", ReviewDecision.Accepted);
+        store.RecordReview("support", ReviewKind.Deactivation, "refund", ReviewDecision.Rejected, "still right, just rare");
+        store.RecordReview("other", ReviewKind.Differentiation, "billing", ReviewDecision.Accepted);
+
+        var reviews = store.Reviews("support");
+
+        reviews.Select(r => (r.Kind, r.ItemId, r.Decision, r.Note)).Should().Equal(
+            (ReviewKind.Promotion, "promoted-abc", ReviewDecision.Accepted, (string?)null),
+            (ReviewKind.Deactivation, "refund", ReviewDecision.Rejected, "still right, just rare"));
+        reviews[0].At.Should().Be(new DateTimeOffset(2026, 1, 2, 3, 4, 5, 123, 456, TimeSpan.Zero));
+    }
+
+    [Fact]
     public void Disposing_a_store_releases_its_file_and_leaves_other_stores_working()
     {
         var first = Path.Combine(_directory, "first.sqlite");
