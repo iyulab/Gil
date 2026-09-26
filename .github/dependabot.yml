@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Workflow actions only: package versions are kept current by hand, together with the code that uses them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

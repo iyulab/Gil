@@ -7,6 +7,25 @@ namespace Gil.Tests.Llm;
 public sealed class EnergyModelTests
 {
     [Fact]
+    public void A_term_that_would_fit_negative_is_fitted_as_zero_and_the_rest_again()
+    {
+        // Unconstrained, these calls give cached tokens a negative cost (-0.289); the non-negative fit drops that term.
+        CallCostSample[] samples =
+        [
+            new(100, 0, 10, 300), new(200, 0, 10, 380), new(300, 0, 20, 560),
+            new(400, 300, 20, 300), new(150, 140, 5, 160), new(250, 200, 30, 380),
+        ];
+
+        var fitted = EnergyModel.Fit(samples)!;
+
+        // The same as a standard non-negative least-squares solver gives.
+        fitted.PerCachedToken.Should().Be(0);
+        fitted.Fixed.Should().BeApproximately(113.793729, 1e-5);
+        fitted.PerFreshPromptToken.Should().BeApproximately(1.025562, 1e-5);
+        fitted.PerOutputToken.Should().BeApproximately(6.503271, 1e-5);
+    }
+
+    [Fact]
     public void Fitting_recovers_the_per_call_and_per_token_costs_of_recorded_calls()
     {
         var truth = new EnergyModel(Fixed: 125, PerFreshPromptToken: 0.74, PerCachedToken: 0.05, PerOutputToken: 15);

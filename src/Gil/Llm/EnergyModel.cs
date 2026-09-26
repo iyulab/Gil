@@ -20,21 +20,49 @@ public sealed record EnergyModel(double Fixed, double PerFreshPromptToken, doubl
 
     /// <summary>
     /// Least-squares coefficients for recorded calls and what each actually cost — for a self-hosted server, the
-    /// processing time it reported (<c>SqliteTelemetryStore.ServerTimeSamples</c>). A term the samples never exercise
-    /// (for example cached tokens on a server that reported none) gets 0. Null when there are fewer samples than
-    /// terms to fit, or the samples cannot separate them (every call the same size).
+    /// processing time it reported (<c>SqliteTelemetryStore.ServerTimeSamples</c>). Every coefficient is non-negative:
+    /// a cost per call or per token cannot be negative, and with few or similar calls an unconstrained fit can make
+    /// one so, which would then under-price every call. Such a term is fitted as 0 and the rest are fitted again (the
+    /// best non-negative fit). A term the samples never exercise (for example cached tokens on a server that reported
+    /// none) gets 0. Null when there are fewer samples than terms to fit, or the samples cannot separate them (every
+    /// call the same size).
     /// </summary>
     public static EnergyModel? Fit(IReadOnlyList<CallCostSample> samples)
     {
         ArgumentNullException.ThrowIfNull(samples);
         var rows = samples.Select(s => new[] { 1.0, Math.Max(s.PromptTokens - s.CachedTokens, 0), s.CachedTokens, s.CompletionTokens }).ToList();
-        int[] terms = [0, .. Enumerable.Range(1, 3).Where(j => rows.Any(r => r[j] != 0))];
-        if (samples.Count < terms.Length)
+        int[] exercised = [0, .. Enumerable.Range(1, 3).Where(j => rows.Any(r => r[j] != 0))];
+        if (samples.Count < exercised.Length || LeastSquares(rows, samples, exercised) is not { } unconstrained)
         {
             return null;
         }
 
-        // Normal equations over the exercised terms: (XᵀX)·β = Xᵀy.
+        // At most four terms: trying every subset and keeping the best fit that stays non-negative is exact.
+        var best = unconstrained;
+        if (unconstrained.Beta.Any(b => b < 0))
+        {
+            best = Enumerable.Range(1, (1 << exercised.Length) - 1)
+                .Select(mask => exercised.Where((_, i) => (mask & (1 << i)) != 0).ToArray())
+                .Select(terms => LeastSquares(rows, samples, terms))
+                .OfType<Fitted>()
+                .Where(f => f.Beta.All(b => b >= 0))
+                .MinBy(f => f.Residual) ?? new Fitted([], [], 0);
+        }
+
+        var coefficients = new double[4];
+        for (var p = 0; p < best.Terms.Length; p++)
+        {
+            coefficients[best.Terms[p]] = best.Beta[p];
+        }
+
+        return new EnergyModel(coefficients[0], coefficients[1], coefficients[2], coefficients[3]);
+    }
+
+    private sealed record Fitted(int[] Terms, double[] Beta, double Residual);
+
+    private static Fitted? LeastSquares(List<double[]> rows, IReadOnlyList<CallCostSample> samples, int[] terms)
+    {
+        // Normal equations over the given terms: (XᵀX)·β = Xᵀy.
         var n = terms.Length;
         var a = new double[n, n + 1];
         for (var i = 0; i < rows.Count; i++)
@@ -55,13 +83,19 @@ public sealed record EnergyModel(double Fixed, double PerFreshPromptToken, doubl
             return null;
         }
 
-        var coefficients = new double[4];
-        for (var p = 0; p < n; p++)
+        var residual = 0.0;
+        for (var i = 0; i < rows.Count; i++)
         {
-            coefficients[terms[p]] = beta[p];
+            var predicted = 0.0;
+            for (var p = 0; p < n; p++)
+            {
+                predicted += beta[p] * rows[i][terms[p]];
+            }
+
+            residual += (samples[i].Cost - predicted) * (samples[i].Cost - predicted);
         }
 
-        return new EnergyModel(coefficients[0], coefficients[1], coefficients[2], coefficients[3]);
+        return new Fitted(terms, beta, residual);
     }
 
     /// <summary>Gaussian elimination with partial pivoting on an augmented n×(n+1) matrix; null when singular.</summary>
