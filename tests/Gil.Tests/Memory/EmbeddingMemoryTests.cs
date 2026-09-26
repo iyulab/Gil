@@ -46,7 +46,7 @@ public sealed class EmbeddingMemoryTests
         var memory = new EmbeddingMemory(new EmbeddingRecorder(model, new EnergyModel(1, 0, 0, 0)));
 
         var (empty, cost) = await memory.LookupAsync("task", "refund please", "t1", TestContext.Current.CancellationToken);
-        var remembered = await memory.RememberAsync("task", "t1", "refund please", "refund policy", TestContext.Current.CancellationToken);
+        var remembered = await memory.RememberAsync("task", "t1", "refund please", "refund policy", "t1", TestContext.Current.CancellationToken);
         var (match, _) = await memory.LookupAsync("task", "can I get a refund", "t2", TestContext.Current.CancellationToken);
 
         (empty, cost, remembered).Should().Be((null, 1.0, 0.0)); // the second embedding was never needed
@@ -157,7 +157,7 @@ public sealed class EmbeddingMemoryTests
         var memory = new EmbeddingMemory(new EmbeddingRecorder(model, new EnergyModel(0, 1, 0, 0)));
 
         await memory.LookupAsync("live", "my parcel has not arrived yet", "t1", TestContext.Current.CancellationToken);
-        await memory.RememberAsync("live", "t1", "my parcel has not arrived yet", "track_order", TestContext.Current.CancellationToken);
+        await memory.RememberAsync("live", "t1", "my parcel has not arrived yet", "track_order", "t1", TestContext.Current.CancellationToken);
         var (near, _) = await memory.LookupAsync("live", "the package I ordered is still not here", "t2", TestContext.Current.CancellationToken);
         var (far, _) = await memory.LookupAsync("live", "I want to cancel my insurance policy", "t3", TestContext.Current.CancellationToken);
 

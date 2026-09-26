@@ -35,6 +35,10 @@ with what to do.
   and the constructor takes any IronHive `IEmbeddingGenerator`. Embedding requests follow the chat rule for
   `ExtraBody`: its fields are merged over the ones Gil sets (objects merge, other values replace), where 0.1.0 let
   `model` and `input` win.
+- **`IMemory.RememberAsync` separates the key from the trace**: `RememberAsync(task, key, state, answer, traceId)`.
+  `key` is the request the answer belongs to (what a lookup reports as the source and `Forget` removes it by);
+  `traceId` is what the call's cost is recorded against. The resolver passes the request's trace id for both. An
+  implementation that took `traceId` as the key should now use `key`.
 - **`PromotionReview` gains `Applied`**, the proposals the tree actually took; record those
   (`RecordPromotionRound`), not every proposal.
 

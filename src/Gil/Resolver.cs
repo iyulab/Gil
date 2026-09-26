@@ -170,7 +170,7 @@ public sealed class Resolver(
         {
             try
             {
-                await memory.RememberAsync(task.Name, traceId, trace.State, answer, cancellationToken).ConfigureAwait(false);
+                await memory.RememberAsync(task.Name, traceId, trace.State, answer, traceId, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (IsDegradable(task, error, cancellationToken))
             {

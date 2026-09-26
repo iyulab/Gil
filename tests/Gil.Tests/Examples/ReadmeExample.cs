@@ -68,7 +68,7 @@ internal static class ReadmeExample
         await resolver.FeedbackAsync(task, result.TraceId, correct: true);
 
         await remembered.RebuildAsync(task.Name, store.FeedbackHistory(task.Name), traceId: "startup");
-        await MemoryReplay.From(store.FeedbackHistory(task.Name)).ApplyAsync(memory, task.Name);
+        await MemoryReplay.From(store.FeedbackHistory(task.Name)).ApplyAsync(memory, task.Name, traceId: "rebuild");
 
         var proposer = new RepeatedOutputProposer(
             new PromotionPolicy(MinSupport: 3),

@@ -34,7 +34,12 @@ public sealed record MemoryReplay(IReadOnlyList<ConfirmedAnswer> Remember, IRead
     /// store that keys rows by <see cref="ConfirmedAnswer.Key"/> ends up the same whether or not it held some of them.
     /// Returns the energy the memory reported.
     /// </summary>
-    public async Task<double> ApplyAsync(IMemory memory, string task, CancellationToken cancellationToken = default)
+    /// <param name="memory">The memory to fill.</param>
+    /// <param name="task">The task whose memory it is.</param>
+    /// <param name="traceId">What the embedding calls are recorded against — a trace of its own, so the rebuild's cost is
+    /// not charged to the requests it replays.</param>
+    /// <param name="cancellationToken">Cancels the replay.</param>
+    public async Task<double> ApplyAsync(IMemory memory, string task, string traceId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(memory);
         foreach (var key in Forget)
@@ -45,7 +50,7 @@ public sealed record MemoryReplay(IReadOnlyList<ConfirmedAnswer> Remember, IRead
         var energy = 0.0;
         foreach (var answer in Remember)
         {
-            energy += await memory.RememberAsync(task, answer.Key, answer.State, answer.Answer, cancellationToken).ConfigureAwait(false);
+            energy += await memory.RememberAsync(task, answer.Key, answer.State, answer.Answer, traceId, cancellationToken).ConfigureAwait(false);
         }
 
         return energy;

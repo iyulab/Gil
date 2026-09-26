@@ -652,7 +652,7 @@ public sealed class ResolverTests
             return System.Threading.Tasks.Task.FromResult((best, 0.5));
         }
 
-        public Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default)
+        public Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
         {
             if (Failure is not null)
             {

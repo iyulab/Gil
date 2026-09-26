@@ -34,24 +34,25 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
         return (new MemoryMatch(key, similarity, answer), call.Energy);
     }
 
-    public async Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default)
+    public async Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
     {
-        if (_pending.Remove(traceId, out var vector))
+        // The vector its lookup computed, when the request went through this memory.
+        if (_pending.Remove(key, out var vector))
         {
-            Put(task, traceId, vector, answer);
+            Put(task, key, vector, answer);
             return 0;
         }
 
         var (vectors, call) = await embedder.EmbedAsync([state], traceId, cancellationToken).ConfigureAwait(false);
-        Put(task, traceId, Unit(vectors[0]), answer);
+        Put(task, key, Unit(vectors[0]), answer);
         return call.Energy;
     }
 
-    public void Forget(string task, string traceId)
+    public void Forget(string task, string key)
     {
         if (_indexes.TryGetValue(task, out var index))
         {
-            index.Remove(traceId);
+            index.Remove(key);
         }
     }
 

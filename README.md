@@ -183,7 +183,7 @@ them. To fill a store from the log, `MemoryReplay` reads the same rule off the f
 those calls. Tenants belong in the task name — one task per tenant and job — so nothing crosses between them:
 
 ```csharp
-await MemoryReplay.From(store.FeedbackHistory(task.Name)).ApplyAsync(memory, task.Name);
+await MemoryReplay.From(store.FeedbackHistory(task.Name)).ApplyAsync(memory, task.Name, traceId: "rebuild");
 ```
 
 Promotion never edits the tree by itself. Whoever operates the task runs a round, reviews the result against the

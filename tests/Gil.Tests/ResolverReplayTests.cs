@@ -192,12 +192,12 @@ public sealed class ResolverReplayTests : IDisposable
                 ? throw new HttpRequestException("memory unavailable")
                 : inner.LookupAsync(task, state, traceId, cancellationToken);
 
-        public Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default) =>
+        public Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default) =>
             failing.GetValueOrDefault(traceId) == "remember"
                 ? throw new HttpRequestException("memory unavailable")
-                : inner.RememberAsync(task, traceId, state, answer, cancellationToken);
+                : inner.RememberAsync(task, key, state, answer, traceId, cancellationToken);
 
-        public void Forget(string task, string traceId) => inner.Forget(task, traceId);
+        public void Forget(string task, string key) => inner.Forget(task, key);
     }
 
     private static PathStep Step(JsonElement s) =>

@@ -15,7 +15,7 @@ public sealed class CircuitBreakingMemoryTests
         await Lookup(memory).Should().ThrowAsync<HttpRequestException>();
         clock.Advance(TimeSpan.FromSeconds(29));
         (await Lookup(memory).Should().ThrowAsync<MemoryUnavailableException>()).Which.Message.Should().Contain("HttpRequestException: refused");
-        var remember = () => memory.RememberAsync("task", "t", "s", "a", TestContext.Current.CancellationToken);
+        var remember = () => memory.RememberAsync("task", "t", "s", "a", "t", TestContext.Current.CancellationToken);
         await remember.Should().ThrowAsync<MemoryUnavailableException>();
 
         inner.Calls.Should().Be(1, "refused calls never reach the endpoint");
@@ -96,7 +96,7 @@ public sealed class CircuitBreakingMemoryTests
             return Failure is null ? Task.FromResult<(MemoryMatch?, double)>((new MemoryMatch("seed", 0.95, "answer"), 0)) : Task.FromException<(MemoryMatch?, double)>(Failure);
         }
 
-        public Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default)
+        public Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
         {
             Calls++;
             return Failure is null ? Task.FromResult(0.0) : Task.FromException<double>(Failure);

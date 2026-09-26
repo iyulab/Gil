@@ -45,12 +45,12 @@ public sealed class CircuitBreakingMemory(IMemory inner, TimeSpan cooldown, Time
         }
     }
 
-    public async Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default)
+    public async Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
     {
         var trial = Enter();
         try
         {
-            var energy = await _inner.RememberAsync(task, traceId, state, answer, cancellationToken).ConfigureAwait(false);
+            var energy = await _inner.RememberAsync(task, key, state, answer, traceId, cancellationToken).ConfigureAwait(false);
             Succeeded();
             return energy;
         }
@@ -66,7 +66,7 @@ public sealed class CircuitBreakingMemory(IMemory inner, TimeSpan cooldown, Time
     }
 
     /// <summary>Passed through: forgetting a wrong answer is never refused.</summary>
-    public void Forget(string task, string traceId) => _inner.Forget(task, traceId);
+    public void Forget(string task, string key) => _inner.Forget(task, key);
 
     /// <summary>Lets the call through, or throws while the circuit is open. True when the call is the trial.</summary>
     private bool Enter()

@@ -115,9 +115,19 @@ public interface IMemory
     Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default);
 
     /// <summary>Adds a confirmed answer; returns the energy it cost.</summary>
-    Task<double> RememberAsync(string task, string traceId, string state, string answer, CancellationToken cancellationToken = default);
+    /// <param name="task">The task whose memory holds it.</param>
+    /// <param name="key">The request the answer belongs to — its trace id, which a lookup reports as the match's
+    /// source and <see cref="Forget"/> removes it by.</param>
+    /// <param name="state">The request as it arrived.</param>
+    /// <param name="answer">The confirmed answer.</param>
+    /// <param name="traceId">The request any model call is recorded against: the same request when the resolver
+    /// remembers on feedback, a separate one when memory is rebuilt, so a rebuild's cost is not charged to old
+    /// requests.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default);
 
-    void Forget(string task, string traceId);
+    /// <summary>Removes the answer remembered under <paramref name="key"/>, if any.</summary>
+    void Forget(string task, string key);
 }
 
 /// <summary>What a request resolved to. <see cref="Mode"/> tells where the answer came from; the contract is the same either way.</summary>
