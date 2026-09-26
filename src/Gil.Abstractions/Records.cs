@@ -78,7 +78,16 @@ public sealed record PathStep(
     string Outcome,
     IReadOnlyDictionary<string, double> Probs,
     double Energy,
-    double? NoneProb = null);
+    double? NoneProb = null)
+{
+    // Shows the probabilities themselves rather than the dictionary's type name.
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        var probs = string.Join(", ", Probs.Select(p => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{p.Key}: {p.Value:0.###}")));
+        builder.Append(System.Globalization.CultureInfo.InvariantCulture, $"Node = {Node}, Layer = {Layer}, Chosen = {Chosen}, P = {P:0.###}, Outcome = {Outcome}, Probs = {{ {probs} }}, Energy = {Energy:0.#}, NoneProb = {NoneProb:0.###}");
+        return true;
+    }
+}
 
 /// <summary>
 /// The memory lookup of a request: the nearest remembered request, kept even on a miss so the threshold can be

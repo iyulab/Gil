@@ -53,7 +53,7 @@ public static partial class OntologyYaml
         ArgumentNullException.ThrowIfNull(root);
         // Quote any string a YAML 1.1 reader would take for a boolean, null or number (`no`, `on`, `1e3`) — the file is
         // read by other implementations, and a bare `no` silently becomes false there.
-        return new SerializerBuilder().WithQuotingNecessaryStrings(quoteYaml1_1Strings: true).Build().Serialize(NodeMap(root));
+        return new SerializerBuilder().WithQuotingNecessaryStrings(quoteYaml1_1Strings: true).Build().Serialize(NodeMap(root, "letters"));
     }
 
     /// <summary>
@@ -189,15 +189,26 @@ public static partial class OntologyYaml
         };
     }
 
-    private static Dictionary<string, object> NodeMap(Node node)
+    // Fields equal to what reading would assume are left out: a label equal to the id, an empty description, the
+    // inherited label scheme, the answer kind and the seed origin.
+    private static Dictionary<string, object> NodeMap(Node node, string inheritedScheme)
     {
-        var map = new Dictionary<string, object>
+        var map = new Dictionary<string, object> { ["id"] = node.Id };
+        if (node.Label != node.Id)
         {
-            ["id"] = node.Id,
-            ["label"] = node.Label,
-            ["description"] = node.Description,
-            ["label_scheme"] = node.LabelScheme,
-        };
+            map["label"] = node.Label;
+        }
+
+        if (node.Description.Length > 0)
+        {
+            map["description"] = node.Description;
+        }
+
+        if (node.LabelScheme != inheritedScheme)
+        {
+            map["label_scheme"] = node.LabelScheme;
+        }
+
         if (node.Origin != "seed")
         {
             map["origin"] = node.Origin;
@@ -210,7 +221,7 @@ public static partial class OntologyYaml
 
         if (node.Children.Count > 0)
         {
-            map["children"] = node.Children.Select(NodeMap).ToList();
+            map["children"] = node.Children.Select(child => NodeMap(child, node.LabelScheme)).ToList();
         }
 
         if (node.Habits.Count > 0)
@@ -223,13 +234,22 @@ public static partial class OntologyYaml
 
     private static Dictionary<string, object> HabitMap(Habit option)
     {
-        var map = new Dictionary<string, object>
+        var map = new Dictionary<string, object> { ["id"] = option.Id };
+        if (option.Kind != HabitKind.Answer)
         {
-            ["id"] = option.Id,
-            ["kind"] = option.Kind.ToString().ToLowerInvariant(),
-            ["label"] = option.Label,
-            ["description"] = option.Description,
-        };
+            map["kind"] = option.Kind.ToString().ToLowerInvariant();
+        }
+
+        if (option.Label != option.Id)
+        {
+            map["label"] = option.Label;
+        }
+
+        if (option.Description.Length > 0)
+        {
+            map["description"] = option.Description;
+        }
+
         if (option.Text is not null)
         {
             map["text"] = option.Text;
@@ -250,7 +270,11 @@ public static partial class OntologyYaml
             map["steps"] = option.Steps;
         }
 
-        map["origin"] = option.Origin;
+        if (option.Origin != "seed")
+        {
+            map["origin"] = option.Origin;
+        }
+
         return map;
     }
 

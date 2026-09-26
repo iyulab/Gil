@@ -1,19 +1,12 @@
 id: root
-label: root
-description: ''
-label_scheme: letters
 children:
 - id: billing
-  label: billing
   description: charges, refunds, invoices and ways to pay
-  label_scheme: letters
   options:
   - id: refund-status
-    kind: answer
     label: refund status
     description: asks where a refund is or when it arrives
     text: Refunds reach the original payment method within 5 business days of approval.
-    origin: seed
   - id: invoice-copy
     kind: template
     label: invoice copy
@@ -25,17 +18,12 @@ children:
     - name: inbox
       instruction: fixed
       fixed: the email address on the account
-    origin: seed
   - id: payment-methods
-    kind: answer
     label: payment methods
     description: asks which cards or wallets are accepted
     text: We accept major credit cards, debit cards and bank transfer.
-    origin: seed
 - id: shipping
-  label: shipping
   description: where a parcel is, how long delivery takes and what it costs
-  label_scheme: letters
   options:
   - id: track-order
     kind: template
@@ -45,69 +33,49 @@ children:
     slots:
     - name: order
       instruction: the order number in the request, or "unknown"
-    origin: seed
   - id: shipping-cost
-    kind: answer
     label: shipping cost
     description: asks what shipping costs
     text: Shipping is free above 50 and 5 below that.
-    origin: seed
   - id: promoted-143c963ac7
-    kind: answer
     label: 'Standard delivery takes 3 to 5 business '
     description: shipping delivery time to my town?
     text: Standard delivery takes 3 to 5 business days.
     origin: promoted
 - id: account
-  label: account
   description: signing in, security and profile details
-  label_scheme: letters
   children:
   - id: security
-    label: security
     description: passwords and sign-in protection
-    label_scheme: letters
     options:
     - id: reset-password
-      kind: answer
       label: reset password
       description: cannot sign in or wants a new password
       text: Use "Forgot password" on the sign-in page; the link is valid for one hour.
-      origin: seed
     - id: two-factor
-      kind: answer
       label: two factor
       description: asks how to turn on a second sign-in step
       text: Turn on two-step sign-in under Settings, then Security.
-      origin: seed
   - id: profile
-    label: profile
     description: the details stored on the account
-    label_scheme: letters
     options:
     - id: change-email
       kind: procedure
       label: change email
       description: wants the account email changed
       steps: Confirm the current address, send a code to the new one, and switch only after the code is entered.
-      origin: seed
     - id: promoted-2ec77ac3e1
-      kind: answer
       label: 'Accounts are closed from Settings, then '
       description: account profile how do i close account
       text: Accounts are closed from Settings, then Privacy; data is removed after 30 days.
       origin: promoted
 - id: returns
-  label: returns
   description: sending an item back
-  label_scheme: letters
   options:
   - id: return-policy
-    kind: answer
     label: return policy
     description: asks whether and until when an item can be returned
     text: Items can be returned within 30 days in their original condition.
-    origin: seed
   - id: return-label
     kind: template
     label: return label
@@ -116,8 +84,5 @@ children:
     slots:
     - name: order
       instruction: the order number in the request, or "unknown"
-    origin: seed
 - id: warranty
-  label: warranty
   description: repairs and replacements under warranty
-  label_scheme: letters

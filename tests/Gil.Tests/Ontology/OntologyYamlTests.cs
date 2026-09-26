@@ -82,6 +82,27 @@ public sealed class OntologyYamlTests
         written.Should().NotContain("kind: concept").And.Contain("fixed: Quality assurance");
     }
 
+    [Fact]
+    public void A_hand_written_minimal_tree_is_written_back_unchanged()
+    {
+        const string minimal = """
+            id: root
+            children:
+            - id: billing
+              description: charges and refunds
+              options:
+              - id: refund
+                text: Refunds take five days.
+            - id: numbers
+              label_scheme: digits
+              options:
+              - id: count
+                text: Three.
+            """;
+
+        OntologyYaml.Dump(OntologyYaml.Parse(minimal).Root).ReplaceLineEndings("\n").Should().Be(minimal.ReplaceLineEndings("\n") + "\n");
+    }
+
     [Theory]
     [InlineData("no")]
     [InlineData("yes")]

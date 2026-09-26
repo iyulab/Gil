@@ -39,9 +39,8 @@ internal static class ReadmeExample
         });
         // Memory is a cache in front of the tree: if it fails, requests go on as misses (the trace keeps the error), and
         // the breaker stops a dead endpoint from adding its retries to every request.
-        var memory = new CircuitBreakingMemory(
-            new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store)),
-            cooldown: TimeSpan.FromSeconds(30));
+        var remembered = new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store));
+        var memory = new CircuitBreakingMemory(remembered, cooldown: TimeSpan.FromSeconds(30));
 
         var resolver = new Resolver(
             new GreedyTraverser(new SingleTokenJudge(recorder)),
@@ -66,6 +65,8 @@ internal static class ReadmeExample
         var result = await resolver.ResolveAsync(task, "I lost my card");
         Console.WriteLine($"{result.Mode}: {result.Output}");
         await resolver.FeedbackAsync(task, result.TraceId, correct: true);
+
+        await remembered.RebuildAsync(task.Name, store.FeedbackHistory(task.Name), traceId: "startup");
 
         var proposer = new RepeatedOutputProposer(
             new PromotionPolicy(MinSupport: 3),

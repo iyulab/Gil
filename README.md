@@ -7,6 +7,29 @@ tree already confirmed. Answers that keep coming back can be promoted into habit
 **Status: early.** The library is being built from a specification whose behaviour was measured first in a
 research harness. Published on NuGet as `Gil` (with `Gil.Abstractions`); the API may still change within 0.x.
 
+## When to use it
+
+Gil is for a task that keeps receiving requests of the same few kinds — support tickets, service requests,
+recurring log messages — where each request needs one answer from a known set of categories and someone can say,
+at least some of the time, whether the answer was right. It sits in front of a model you already call:
+
+- **Memory** answers a request that means the same as one whose answer was confirmed. Like a semantic cache, but
+  only confirmed answers enter it, and an answer later marked wrong is forgotten.
+- **The tree** of one-token judgments settles what memory missed when the categories are clear enough to judge,
+  and narrows generation to the confirmed category when they are not.
+- **Every call is recorded and priced**, so whether the tree pays for itself is read off the log rather than assumed.
+
+What was measured: wherever requests repeated, memory did most of the work. Behind memory, the tree with narrowed
+generation beat full generation — one to three points more accurate at about half the cost — on an English benchmark
+with a hosted model. With a mid-size open model on non-English service data it made no difference to accuracy, and
+its cost ran from somewhat lower to nearly double, depending on how long the full generation prompt was. Promoting
+answers into habits did not pay on the realistic datasets and stays off unless a task turns it on. Measure it on your
+own log before relying on it.
+
+It is not the right tool for free conversation (there is no answer to remember or category to judge), for choosing
+between models (a router does that), or for a task that never gets feedback (memory then stays empty — see
+"Memory lives in the process" below for filling it from answers you already have confirmed).
+
 ## Layout
 
 | Project | Contents |
@@ -68,9 +91,8 @@ using var embedder = new OpenAICompatibleEmbeddingModel(new OpenAICompatibleOpti
 });
 // Memory is a cache in front of the tree: if it fails, requests go on as misses (the trace keeps the error), and
 // the breaker stops a dead endpoint from adding its retries to every request.
-var memory = new CircuitBreakingMemory(
-    new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store)),
-    cooldown: TimeSpan.FromSeconds(30));
+var remembered = new EmbeddingMemory(new EmbeddingRecorder(embedder, new EnergyModel(Fixed: 0, PerFreshPromptToken: 0.05, PerCachedToken: 0, PerOutputToken: 0), store));
+var memory = new CircuitBreakingMemory(remembered, cooldown: TimeSpan.FromSeconds(30));
 
 var resolver = new Resolver(
     new GreedyTraverser(new SingleTokenJudge(recorder)),
@@ -97,6 +119,35 @@ Console.WriteLine($"{result.Mode}: {result.Output}");
 await resolver.FeedbackAsync(task, result.TraceId, correct: true);
 ```
 
+The tree file names the categories and, under each, the answers a request can get. Only `id` is required; a
+field left out takes the value shown in the comment, and the writer leaves out any field equal to it, so a file
+written back after a review diffs cleanly against the one a person wrote:
+
+```yaml
+id: root
+children:
+  - id: billing
+    description: Charges, invoices, refunds, payment methods   # default: empty — but this is what the judge reads
+    options:
+      - id: billing-refund
+        text: "Refunds reach the original payment method within 5 business days."
+        # kind: answer (or template with slots, or procedure with steps) · label: the id · origin: seed
+  - id: cards
+    description: Lost, stolen or blocked cards
+    # label_scheme: inherited from the parent, letters at the root (digits holds fewer candidates)
+    options:
+      - id: cards-block
+        text: "Freeze the card in the app under Cards > Freeze; a replacement ships in 3 days."
+```
+
+A node has either children (categories) or options (answers), not both. Loading warns when siblings' descriptions
+share distinctive words, since the judge may not tell them apart.
+
+`TreeAnswerContract` makes the fallback pick one of the tree's answers (or "none of these"); it never writes a new
+one. A request that fits no answer exactly gets the closest listed one, or none. For answers written case by case,
+give the task a `TextContract` instead: the fallback then generates, and answers confirmed by feedback can be
+remembered and later proposed as habits.
+
 A task whose answers are free text may gain nothing from judgments; define it with a bare root (`id: root`) and
 it goes from memory straight to the fallback without a judgment call.
 
@@ -106,6 +157,14 @@ is no default for the same reason as the thresholds: "none of these" and the tre
 or out-of-scope requests stop being rejected. Two languages are built in: `PromptLanguage.Korean`, the wording the
 behaviour was measured with (kept as measured), and `PromptLanguage.English`. To change a piece of the wording, start
 from one of them, for example `PromptLanguage.English with { NoneOfThese = "Not applicable" }`.
+
+Memory lives in the process. It is an index over the feedback in the log, so a restarted process starts empty
+until it is rebuilt from that log — the same call fills it from answers confirmed elsewhere, once they are in the
+store:
+
+```csharp
+await remembered.RebuildAsync(task.Name, store.FeedbackHistory(task.Name), traceId: "startup");
+```
 
 Promotion never edits the tree by itself. Whoever operates the task runs a round, reviews the result against the
 authored YAML and applies what they accept:
@@ -118,6 +177,10 @@ var proposer = new RepeatedOutputProposer(
 var review = Promotion.Review(tree, proposer.Propose(tree, store.PromotionCandidates(task.Name)));
 File.WriteAllText("support.proposed.yaml", review.After);
 ```
+
+By default a proposal comes only from fallback answers confirmed as correct. When the right answer is one only
+your organisation knows, it arrives as a correction instead; set `FromCorrections = true` on the policy to count
+corrections too. A round that proposes nothing says so only by an empty list.
 
 `Deactivation.Propose` and `Differentiation.Capacity` / `Differentiation.Anchored` produce the other two review
 lists: habits to retire, and nodes to split or categories to add.
