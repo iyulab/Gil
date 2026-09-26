@@ -188,7 +188,9 @@ your organisation knows, it arrives as a correction instead; set `FromCorrection
 corrections too. A round that proposes nothing says so only by an empty list.
 
 `Deactivation.Propose` and `Differentiation.Capacity` / `Differentiation.Anchored` produce the other two review
-lists: habits to retire, and nodes to split or categories to add. Record what the reviewer decided on each item, with
+lists: habits to retire, and nodes to split or categories to add. `Differentiation.UnservedAsync` adds the requests
+the task keeps answering "none of these" to, grouped by how similar they are — each group is either a category to
+add or out-of-scope input to confirm as such. Record what the reviewer decided on each item, with
 the reason when there is one — the log then shows what was accepted and rejected, and what reviewing the task costs:
 
 ```csharp

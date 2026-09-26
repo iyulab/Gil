@@ -146,4 +146,41 @@ public sealed class DifferentiationTests
 
     private static PromotionCandidate Correct(string traceId, string anchor, string output) =>
         new(traceId, $"input of {traceId}", anchor, output, "correct", null, 1);
+
+    [Fact]
+    public async Task Similar_requests_that_kept_getting_none_of_these_are_signalled_as_unserved()
+    {
+        var none = PromptLanguage.English.NoneOfThese;
+        PromotionCandidate Request(string id, string state, string anchor, string? output, string? verdict = null, string? correction = null) =>
+            new(id, state, anchor, output, verdict, correction, 1);
+        PromotionCandidate[] candidates =
+        [
+            Request("t1", "weather tomorrow", "root", none),
+            Request("t2", "sunny or rain?", "root", none),
+            Request("t3", "forecast for seoul", "bank", none),
+            Request("t4", "weather this weekend", "root", none, "wrong", "Weather: see the forecast page."), // corrected to a real answer
+            Request("t5", "write me a poem", "root", none),
+            Request("t6", "how much is in my account", "bank", "balance", "correct"),                        // answered
+        ];
+        var embedder = new ByText(new Dictionary<string, float[]>
+        {
+            ["weather tomorrow"] = [1, 0, 0],
+            ["sunny or rain?"] = [0.95f, 0.1f, 0],
+            ["forecast for seoul"] = [0.9f, 0.05f, 0.1f],
+            ["weather this weekend"] = [1, 0, 0],
+            ["write me a poem"] = [0, 0, 1],
+        });
+
+        var signals = await Differentiation.UnservedAsync(candidates, PromptLanguage.English, embedder, similarity: 0.9, minSupport: 3, TestContext.Current.CancellationToken);
+
+        signals.Should().ContainSingle();
+        signals[0].Should().BeEquivalentTo(new DifferentiationSignal(DifferentiationKind.Unserved, "root", null, null, 3, ["t1", "t2", "t3"]));
+        (await Differentiation.UnservedAsync(candidates, PromptLanguage.English, embedder, similarity: 0.9, minSupport: 4, TestContext.Current.CancellationToken)).Should().BeEmpty();
+    }
+
+    private sealed class ByText(IReadOnlyDictionary<string, float[]> vectors) : IEmbeddingModel
+    {
+        public Task<EmbeddingResult> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new EmbeddingResult([.. texts.Select(t => vectors[t])], "fake", 0, 0, "{}"));
+    }
 }
