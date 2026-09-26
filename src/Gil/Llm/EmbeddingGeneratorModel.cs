@@ -19,6 +19,7 @@ public sealed class EmbeddingGeneratorModel(IEmbeddingGenerator<string, Embeddin
 {
     private readonly IEmbeddingGenerator<string, Embedding<float>> _generator = generator ?? throw new ArgumentNullException(nameof(generator));
 
+    /// <inheritdoc />
     public async Task<EmbeddingResult> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(texts);

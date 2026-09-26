@@ -112,6 +112,12 @@ public sealed record MemoryMatch(string Source, double Similarity, string Answer
 public interface IMemory
 {
     /// <summary>The nearest remembered request (null when memory is empty) and the energy the lookup cost.</summary>
+    /// <param name="task">The task whose memory to search.</param>
+    /// <param name="state">The request as it arrived.</param>
+    /// <param name="traceId">The request being looked up: its cost is recorded against it, and it is the key a later
+    /// <see cref="RememberAsync"/> of its confirmed answer uses — so a memory may keep what the lookup computed until
+    /// then.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
     Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default);
 
     /// <summary>Adds a confirmed answer; returns the energy it cost.</summary>

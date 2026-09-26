@@ -15,7 +15,8 @@ public sealed record PromptLanguage
 {
     /// <summary>
     /// The wording the runtime's behaviour was measured with. It is kept byte for byte, defects included, and changes
-    /// only together with a new measurement.
+    /// only together with a new measurement. One difference from 0.1.0, outside the measured trees (where every answer
+    /// had a description): an answer without a description no longer gets an empty example in the tree contract.
     /// </summary>
     public static PromptLanguage Korean { get; } = new()
     {
@@ -98,11 +99,13 @@ public sealed record PromptLanguage
     /// </summary>
     public required string OutOfCategory { get; init; }
 
+    /// <summary>The judge's system message.</summary>
     public required string JudgeSystem { get; init; }
 
     /// <summary>Follows the input. Placeholder: {choices} (the labelled candidates, "none of these" first).</summary>
     public required string JudgeQuestion { get; init; }
 
+    /// <summary>The fallback generator's system message.</summary>
     public required string FallbackSystem { get; init; }
 
     /// <summary>The categories the tree confirmed. Placeholder: {path}.</summary>
@@ -117,6 +120,7 @@ public sealed record PromptLanguage
     /// <summary>A procedure habit's steps, appended to the input it is generated from. Placeholder: {steps}.</summary>
     public required string Procedure { get; init; }
 
+    /// <summary>The slot filler's system message.</summary>
     public required string SlotSystem { get; init; }
 
     /// <summary>Placeholder: {template}.</summary>
@@ -125,6 +129,7 @@ public sealed record PromptLanguage
     /// <summary>Placeholder: {blanks} (one line per blank).</summary>
     public required string SlotBlanks { get; init; }
 
+    /// <summary>Asks for the filled blanks as one JSON object.</summary>
     public required string SlotOutput { get; init; }
 
     /// <summary>Placeholder: {reason}.</summary>
@@ -139,11 +144,13 @@ public sealed record PromptLanguage
     /// <summary>The reason recorded when blanks stayed empty; not sent to the model. Placeholder: {blanks}.</summary>
     public required string SlotFailed { get; init; }
 
+    /// <summary>A free-text contract's instruction.</summary>
     public required string TextInstruction { get; init; }
 
     /// <summary>Placeholder: {max}.</summary>
     public required string TextInstructionMax { get; init; }
 
+    /// <summary>The violation when a free-text answer is empty.</summary>
     public required string TextEmpty { get; init; }
 
     /// <summary>Placeholders: {max}, {length}.</summary>

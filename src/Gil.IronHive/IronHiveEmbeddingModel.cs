@@ -4,7 +4,7 @@ using IronHive.Abstractions.Embedding;
 using IronHive.Providers.OpenAI;
 using IronHive.Providers.OpenAI.Compatible.Embedding;
 
-namespace Gil.IronHive;
+namespace Gil.Llm;
 
 /// <summary>
 /// Embeddings through an IronHive <see cref="IEmbeddingGenerator"/>, reading the vectors in input order together with
@@ -22,6 +22,7 @@ public sealed class IronHiveEmbeddingModel : IEmbeddingModel, IDisposable
     private readonly bool _ownsGenerator;
     private readonly EmbeddingRequestOptions? _options;
 
+    /// <summary>A model over an IronHive generator the caller built and owns.</summary>
     /// <param name="generator">The provider to call; the caller keeps ownership.</param>
     /// <param name="model">The embedding model to ask for.</param>
     /// <param name="extraBody">Provider fields sent with every request (for example a server's pooling option), merged
@@ -61,6 +62,7 @@ public sealed class IronHiveEmbeddingModel : IEmbeddingModel, IDisposable
         return new IronHiveEmbeddingModel(generator, options.Model, options.ExtraBody, ownsGenerator: true, ownedHttp: http);
     }
 
+    /// <inheritdoc />
     public async Task<EmbeddingResult> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(texts);
@@ -88,6 +90,7 @@ public sealed class IronHiveEmbeddingModel : IEmbeddingModel, IDisposable
         return new EmbeddingResult(vectors, model, tokens, latencyMs, recorded);
     }
 
+    /// <summary>Disposes the generator and HTTP client this model built; a generator passed in is left to its owner.</summary>
     public void Dispose()
     {
         if (_ownsGenerator)

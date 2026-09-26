@@ -65,7 +65,6 @@ using System.Text.Json.Nodes;
 using Gil;
 using Gil.Fallback;
 using Gil.Habits;
-using Gil.IronHive;
 using Gil.Judge;
 using Gil.Llm;
 using Gil.Memory;

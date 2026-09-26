@@ -3,14 +3,23 @@ namespace Gil;
 /// <summary>What a person reviewed: a proposed habit, a habit proposed for retirement, or a node signalled for splitting.</summary>
 public enum ReviewKind
 {
+    /// <summary>A habit proposed by a promotion round.</summary>
     Promotion,
+
+    /// <summary>A habit proposed for retirement.</summary>
     Deactivation,
+
+    /// <summary>A node signalled for splitting or a new category.</summary>
     Differentiation,
 }
 
+/// <summary>What the reviewer decided.</summary>
 public enum ReviewDecision
 {
+    /// <summary>Taken into the tree.</summary>
     Accepted,
+
+    /// <summary>Left out, with the reason in the note.</summary>
     Rejected,
 }
 
@@ -29,6 +38,7 @@ public sealed record ReviewRecord(DateTimeOffset At, ReviewKind Kind, string Ite
 /// </summary>
 public interface IReviewLog
 {
+    /// <summary>Records one decision on one item of a review list.</summary>
     void RecordReview(string task, ReviewKind kind, string itemId, ReviewDecision decision, string? note = null);
 
     /// <summary>The task's decisions, oldest first.</summary>

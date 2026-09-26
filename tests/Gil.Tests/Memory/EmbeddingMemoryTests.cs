@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Microsoft.Data.Sqlite;
 using Gil.Fallback;
-using Gil.IronHive;
 using Gil.Llm;
 using Gil.Memory;
 using Gil.Ontology;

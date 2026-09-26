@@ -6,7 +6,7 @@ using IronHive.Providers.OpenAI;
 using IronHive.Providers.OpenAI.Compatible;
 using IronHive.Providers.OpenAI.Compatible.ChatCompletion;
 
-namespace Gil.IronHive;
+namespace Gil.Llm;
 
 /// <summary>
 /// Chat completions through an IronHive <see cref="IMessageGenerator"/>, reading what judgments and cost accounting
@@ -26,6 +26,7 @@ public sealed class IronHiveChatModel : IChatModel, IDisposable
     private readonly bool _ownsGenerator;
     private readonly JsonObject? _extraBody;
 
+    /// <summary>A model over an IronHive generator the caller built and owns.</summary>
     /// <param name="generator">The provider to call; the caller keeps ownership.</param>
     /// <param name="model">The model to ask for.</param>
     /// <param name="extraBody">Provider fields sent with every request (for example a server's chat-template

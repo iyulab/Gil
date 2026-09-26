@@ -11,8 +11,11 @@ public sealed record ConfirmedAnswer(string Key, string State, string Answer);
 /// overturned, and the keys to forget — remembered answers that were served and judged wrong. The same rule the resolver
 /// applies one verdict at a time, so any <see cref="IMemory"/> can be rebuilt from the log.
 /// </summary>
+/// <param name="Remember">The answers to hold, in the order they were confirmed.</param>
+/// <param name="Forget">The keys of remembered answers that were served and judged wrong.</param>
 public sealed record MemoryReplay(IReadOnlyList<ConfirmedAnswer> Remember, IReadOnlyCollection<string> Forget)
 {
+    /// <summary>Reads the replay off a task's feedback history, oldest first.</summary>
     public static MemoryReplay From(IReadOnlyList<FeedbackEntry> history)
     {
         ArgumentNullException.ThrowIfNull(history);

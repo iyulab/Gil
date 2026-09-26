@@ -26,7 +26,8 @@ public enum DifferentiationKind
 
 /// <summary>A differentiation signal, for a person to act on. How to split is theirs to decide.</summary>
 /// <param name="Kind">What the signal says.</param>
-/// <param name="Node">The full node (capacity) or the anchor the answers piled up at.</param>
+/// <param name="Node">Capacity: the full node. Unserved: the node most of the requests stopped at. Otherwise: the anchor the
+/// answers piled up at.</param>
 /// <param name="Output">The repeated confirmed answer; null for capacity and unserved.</param>
 /// <param name="Target">Missed: the node holding the answer. Reanchor: the child that accepts it. Otherwise null.</param>
 /// <param name="Support">Capacity: the node's candidates. Unserved: the similar requests. Otherwise: how often the answer repeated.</param>
@@ -131,7 +132,8 @@ public static class Differentiation
     /// how similar their inputs are: two requests whose embeddings reach <paramref name="similarity"/> are linked, and a
     /// group is everything linked together. Groups of at least <paramref name="minSupport"/> are signalled, largest
     /// first (ties: first seen), at the node most of them stopped at. Every pair is compared, so run it on a review
-    /// round's worth of requests, not on a whole history at once.
+    /// round's worth of requests, not on a whole history at once. Only a task whose contract answers with the
+    /// language's "none of these" (the tree contract) produces such requests; for others this finds nothing.
     /// </summary>
     /// <param name="candidates">The task's promotion evidence (<see cref="IPromotionEvidenceSource.PromotionCandidates"/>).</param>
     /// <param name="language">The task's language; its "none of these" marks an unserved request.</param>

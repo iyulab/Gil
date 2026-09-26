@@ -630,6 +630,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             : new HabitCounts();
     }
 
+    /// <inheritdoc />
     public void RecordPromotionRound(string task, int atIndex, IReadOnlyList<PromotionProposal> applied)
     {
         ArgumentNullException.ThrowIfNull(applied);
@@ -649,6 +650,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         });
     }
 
+    /// <inheritdoc />
     public IReadOnlyList<PromotionProposal>? PromotionRound(string task, int atIndex)
     {
         if (Scalar("SELECT 1 FROM promotion_rounds WHERE task = $task AND at_index = $at", ("$task", task), ("$at", atIndex)) is null)
@@ -678,12 +680,14 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         return proposals;
     }
 
+    /// <inheritdoc />
     public void RecordReview(string task, ReviewKind kind, string itemId, ReviewDecision decision, string? note = null) =>
         Execute(
             "INSERT INTO reviews (task, reviewed_at, kind, item_id, decision, note) VALUES ($task, $at, $kind, $item, $decision, $note)",
             ("$task", task), ("$at", Now()), ("$kind", kind.ToString().ToLowerInvariant()), ("$item", itemId),
             ("$decision", decision.ToString().ToLowerInvariant()), ("$note", note));
 
+    /// <inheritdoc />
     public IReadOnlyList<ReviewRecord> Reviews(string task)
     {
         using var command = Command(
@@ -704,6 +708,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         return reviews;
     }
 
+    /// <inheritdoc />
     public IReadOnlyList<(int AtIndex, PromotionProposal Proposal)> PromotionHistory(string task)
     {
         var rounds = new List<int>();

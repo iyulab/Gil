@@ -3,10 +3,9 @@ using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using IronHive.Abstractions.Messages.Content;
 using IronHive.Abstractions.Messages;
-using Gil.IronHive;
 using Gil.Llm;
 
-namespace Gil.Tests.IronHive;
+namespace Gil.Tests.Llm;
 
 public sealed class IronHiveChatModelTests
 {
