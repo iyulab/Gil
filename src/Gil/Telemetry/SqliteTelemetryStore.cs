@@ -12,7 +12,7 @@ namespace Gil.Telemetry;
 /// any language read these files directly, so columns may be added but never renamed or repurposed.
 /// Timestamps are UTC ISO-8601 strings; JSON columns keep non-ASCII text unescaped.
 /// </summary>
-public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IPromotionEvidenceSource, IHabitUsageSource, IDisposable
+public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, IShadowEvidenceSource, IPromotionEvidenceSource, IPromotionLog, IHabitUsageSource, IDisposable
 {
     internal const string Schema = """
         CREATE TABLE IF NOT EXISTS traces (
@@ -30,7 +30,8 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             implicit_signal     TEXT,
             label               TEXT,
             explored_output     TEXT,
-            recall              TEXT
+            recall              TEXT,
+            failure             TEXT
         );
 
         CREATE TABLE IF NOT EXISTS calls (
@@ -100,7 +101,36 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS promotion_rounds (
+            task      TEXT NOT NULL,
+            at_index  INTEGER NOT NULL,
+            PRIMARY KEY (task, at_index)
+        );
+
+        CREATE TABLE IF NOT EXISTS promotions (
+            task             TEXT NOT NULL,
+            at_index         INTEGER NOT NULL,
+            anchor           TEXT NOT NULL,
+            option_id        TEXT NOT NULL,
+            option           TEXT NOT NULL,
+            sources          TEXT NOT NULL,
+            support          INTEGER NOT NULL,
+            anchor_volume    INTEGER NOT NULL,
+            expected_saving  REAL NOT NULL,
+            added_cost       REAL NOT NULL,
+            PRIMARY KEY (task, at_index, option_id)
+        );
         """;
+
+    /// <summary>Columns added after the first files were written. They hold NULL until written, so adding them is enough.</summary>
+    private static readonly (string Table, string Column, string Type)[] AddedColumns =
+    [
+        ("traces", "explored_output", "TEXT"),
+        ("traces", "recall", "TEXT"),
+        ("traces", "failure", "TEXT"),
+        ("calls", "candidates", "TEXT"),
+    ];
 
     internal static readonly JsonSerializerOptions Json = new()
     {
@@ -121,15 +151,40 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
     public SqliteTelemetryStore(string path, bool restricted = false, TimeProvider? clock = null)
     {
         _clock = clock ?? TimeProvider.System;
-        var source = new SqliteConnectionStringBuilder { DataSource = path, DefaultTimeout = 30 };
+        // The store holds one connection for its lifetime; unpooled, so disposing it releases the file without clearing
+        // the process-wide pool other stores may be using.
+        var source = new SqliteConnectionStringBuilder { DataSource = path, DefaultTimeout = 30, Pooling = false };
         _connection = new SqliteConnection(source.ToString());
         _connection.Open();
         Execute("PRAGMA journal_mode=WAL");
         // The stored schema text must not depend on how this file was checked out: other tools compare the files.
         Execute(Schema.ReplaceLineEndings("\n"));
+        Migrate();
         if (restricted)
         {
             Execute("INSERT OR REPLACE INTO store_meta (key, value) VALUES ('restricted', '1')");
+        }
+    }
+
+    /// <summary>Adds the columns an older file lacks, so files written before a column existed open and stay readable.</summary>
+    private void Migrate()
+    {
+        foreach (var table in AddedColumns.Select(c => c.Table).Distinct())
+        {
+            var present = new HashSet<string>(StringComparer.Ordinal);
+            using (var command = Command($"PRAGMA table_info({table})", []))
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    present.Add(reader.GetString(1));
+                }
+            }
+
+            foreach (var (_, column, type) in AddedColumns.Where(c => c.Table == table && !present.Contains(c.Column)))
+            {
+                Execute($"ALTER TABLE {table} ADD COLUMN {column} {type}");
+            }
         }
     }
 
@@ -147,7 +202,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
         ArgumentNullException.ThrowIfNull(outcome);
         Execute(
             "UPDATE traces SET mode = $mode, output = $output, confidence = $confidence, energy = $energy, "
-                + "path = $path, recall = $recall, explored_output = $explored WHERE trace_id = $id",
+                + "path = $path, recall = $recall, explored_output = $explored, failure = $failure WHERE trace_id = $id",
             ("$mode", outcome.Mode),
             ("$output", outcome.Output),
             ("$confidence", outcome.Confidence),
@@ -155,6 +210,7 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             ("$path", JsonSerializer.Serialize(outcome.Path, Json)),
             ("$recall", outcome.Recall is null ? null : JsonSerializer.Serialize(outcome.Recall, Json)),
             ("$explored", outcome.ExploredOutput),
+            ("$failure", outcome.Failure),
             ("$id", traceId));
     }
 
@@ -522,6 +578,127 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
             : new HabitCounts();
     }
 
+    public void RecordPromotionRound(string task, int atIndex, IReadOnlyList<PromotionProposal> applied)
+    {
+        ArgumentNullException.ThrowIfNull(applied);
+        InTransaction(() =>
+        {
+            Execute("INSERT INTO promotion_rounds (task, at_index) VALUES ($task, $at)", ("$task", task), ("$at", atIndex));
+            foreach (var proposal in applied)
+            {
+                Execute(
+                    "INSERT INTO promotions (task, at_index, anchor, option_id, option, sources, support, anchor_volume, "
+                        + "expected_saving, added_cost) VALUES ($task, $at, $anchor, $id, $option, $sources, $support, $volume, $saving, $cost)",
+                    ("$task", task), ("$at", atIndex), ("$anchor", proposal.Anchor), ("$id", proposal.Habit.Id),
+                    ("$option", OptionJson(proposal.Habit)), ("$sources", JsonSerializer.Serialize(proposal.Sources, Json)),
+                    ("$support", proposal.Support), ("$volume", proposal.AnchorVolume), ("$saving", proposal.ExpectedSaving),
+                    ("$cost", proposal.AddedCost));
+            }
+        });
+    }
+
+    public IReadOnlyList<PromotionProposal>? PromotionRound(string task, int atIndex)
+    {
+        if (Scalar("SELECT 1 FROM promotion_rounds WHERE task = $task AND at_index = $at", ("$task", task), ("$at", atIndex)) is null)
+        {
+            return null;
+        }
+
+        using var command = Command(
+            "SELECT anchor, option, sources, support, anchor_volume, expected_saving, added_cost FROM promotions "
+                + "WHERE task = $task AND at_index = $at ORDER BY rowid",
+            [("$task", task), ("$at", atIndex)]);
+        using var reader = command.ExecuteReader();
+        var proposals = new List<PromotionProposal>();
+        while (reader.Read())
+        {
+            proposals.Add(new PromotionProposal(
+                reader.GetString(0),
+                HabitFromOptionJson(reader.GetString(1)),
+                JsonSerializer.Deserialize<List<string>>(reader.GetString(2), Json) ?? [],
+                reader.GetInt32(3),
+                reader.GetInt32(4),
+                reader.GetDouble(5),
+                reader.GetDouble(6),
+                []));
+        }
+
+        return proposals;
+    }
+
+    public IReadOnlyList<(int AtIndex, PromotionProposal Proposal)> PromotionHistory(string task)
+    {
+        var rounds = new List<int>();
+        using (var command = Command("SELECT at_index FROM promotion_rounds WHERE task = $task ORDER BY at_index", [("$task", task)]))
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                rounds.Add(reader.GetInt32(0));
+            }
+        }
+
+        return [.. rounds.SelectMany(at => (PromotionRound(task, at) ?? []).Select(p => (at, p)))];
+    }
+
+    /// <summary>
+    /// A habit as the <c>promotions.option</c> column holds it: every field, in the order and with the names every
+    /// implementation reads — the kind as its YAML word, absent values as null, no slots as an empty list.
+    /// </summary>
+    internal static string OptionJson(Habit habit)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Encoder = Json.Encoder }))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("id", habit.Id);
+            writer.WriteString("kind", habit.Kind.ToString().ToLowerInvariant());
+            writer.WriteString("label", habit.Label);
+            writer.WriteString("description", habit.Description);
+            writer.WriteString("text", habit.Text);
+            writer.WriteString("template", habit.Template);
+            writer.WriteStartArray("slots");
+            foreach (var slot in habit.Slots)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("name", slot.Name);
+                writer.WriteString("instruction", slot.Instruction);
+                writer.WriteString("fixed", slot.Fixed);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteString("steps", habit.Steps);
+            writer.WriteString("origin", habit.Origin);
+            writer.WriteEndObject();
+        }
+
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>Reads <see cref="OptionJson"/>, tolerating fields another implementation leaves out.</summary>
+    internal static Habit HabitFromOptionJson(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        string? Optional(JsonElement element, string name) =>
+            element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return new Habit
+        {
+            Id = root.GetProperty("id").GetString()!,
+            Kind = Enum.Parse<HabitKind>(root.GetProperty("kind").GetString()!, ignoreCase: true),
+            Label = root.GetProperty("label").GetString()!,
+            Description = root.GetProperty("description").GetString()!,
+            Text = Optional(root, "text"),
+            Template = Optional(root, "template"),
+            Slots = root.TryGetProperty("slots", out var slots) && slots.ValueKind == JsonValueKind.Array
+                ? [.. slots.EnumerateArray().Select(s => new Slot(s.GetProperty("name").GetString()!, s.GetProperty("instruction").GetString()!, Optional(s, "fixed")))]
+                : [],
+            Steps = Optional(root, "steps"),
+            Origin = Optional(root, "origin") ?? "seed",
+        };
+    }
+
     /// <summary>The task's requests that received feedback, oldest first — what a memory index is rebuilt from.</summary>
     public IReadOnlyList<Gil.Memory.FeedbackEntry> FeedbackHistory(string task)
     {
@@ -549,7 +726,6 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
     public void Dispose()
     {
         _connection.Dispose();
-        SqliteConnection.ClearAllPools();
     }
 
     internal static string Format(DateTimeOffset at) =>

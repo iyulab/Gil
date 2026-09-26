@@ -176,7 +176,12 @@ var proposer = new RepeatedOutputProposer(
     JudgeCostModel.Fit(store.JudgeCostSamples(task.Name)));
 var review = Promotion.Review(tree, proposer.Propose(tree, store.PromotionCandidates(task.Name)));
 File.WriteAllText("support.proposed.yaml", review.After);
+store.RecordPromotionRound(task.Name, atIndex: store.Usage(task.Name).Total, review.Applied);
 ```
+
+Record the round once you apply it: `atIndex` is how many of the task's requests were resolved before the proposer ran,
+and `Applied` holds what the tree took (an empty round is recorded too). A later review or a restart then sees exactly
+what was proposed when, instead of running the proposer again over a log that has grown since.
 
 By default a proposal comes only from fallback answers confirmed as correct. When the right answer is one only
 your organisation knows, it arrives as a correction instead; set `FromCorrections = true` on the policy to count

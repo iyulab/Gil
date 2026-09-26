@@ -128,6 +128,10 @@ public interface IMemory
 /// <param name="Energy">Total cost of every call made for this request.</param>
 /// <param name="TraceId">The request's id; feedback refers to it.</param>
 /// <param name="Recall">The nearest remembered request when memory was consulted, hit or miss.</param>
+/// <param name="Failure">
+/// Why <paramref name="Output"/> is null: the last contract violation, or the blanks a template could not fill, from the
+/// step that produced the final result. Null whenever there is an output, and on abstain.
+/// </param>
 public sealed record Resolution(
     string? Output,
     string Mode,
@@ -135,4 +139,5 @@ public sealed record Resolution(
     double? Confidence,
     double Energy,
     string TraceId,
-    Recall? Recall);
+    Recall? Recall,
+    string? Failure = null);

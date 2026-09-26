@@ -51,6 +51,29 @@ internal static class CompatibilityFixture
         ],
     };
 
+    /// <summary>The violation recorded on the request that never met its contract.</summary>
+    public const string Unmet = "목록에 없는 답: 모름";
+
+    /// <summary>A promoted template habit with a fixed and an open blank, so every field of the stored option is exercised.</summary>
+    public static readonly PromotionProposal Proposal = new(
+        "cat-배송",
+        new Habit
+        {
+            Id = "promoted-0123456789",
+            Kind = HabitKind.Template,
+            Label = "배송 접수",
+            Description = "택배가 아직 안 왔어요",
+            Template = "{item} 접수됨 — {team}",
+            Slots = [new Slot("item", "무엇을 보냈나"), new Slot("team", "고정", Fixed: "배송팀")],
+            Origin = "promoted",
+        },
+        ["fixture-0001", "fixture-0002"],
+        Support: 3,
+        AnchorVolume: 4,
+        ExpectedSaving: 120.5,
+        AddedCost: 20.25,
+        Warnings: ["not stored"]);
+
     public static void Write(string path)
     {
         foreach (var file in new[] { path, path + "-wal", path + "-shm" })
@@ -67,6 +90,9 @@ internal static class CompatibilityFixture
         store.RecordPath("fixture", [new PathStep("root", 1, "cat-결제", 0.9, "accept", new Dictionary<string, double>(), 0)]);
         store.RecordOutcome("fixture", "cat-배송", new HabitCounts(Reinforced: 3, Penalized: 1));
         store.RecordOutcome("fixture", "opt-1", new HabitCounts(Missed: 2, Explored: 1, Disputed: 1));
+        store.OpenTrace("unmet-0001", "fixture", "뭐라고요?");
+        store.CloseTrace("unmet-0001", new TraceOutcome { Mode = "fallback", Energy = 90.0, Failure = Unmet });
+        store.RecordPromotionRound("fixture", 1, [Proposal]);
     }
 }
 

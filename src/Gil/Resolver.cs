@@ -63,9 +63,10 @@ public sealed class Resolver(
         string? output;
         string mode;
         string? explored = null;
+        string? failure = null;
         if (traversed.Habit is Habit habit)
         {
-            (output, mode, var cost) = await FromHabitAsync(task, habit, state, traceId, cancellationToken).ConfigureAwait(false);
+            (output, mode, var cost, failure) = await FromHabitAsync(task, habit, state, traceId, cancellationToken).ConfigureAwait(false);
             energy += cost;
             if (output is null && habit.Kind == HabitKind.Template && task.Policy.AllowFallback)
             {
@@ -73,7 +74,7 @@ public sealed class Resolver(
                 // category — what the judgments confirmed before the one that chose the habit.
                 var categories = traversed.Confirmed.SkipLast(1).ToList();
                 mode = categories.Count > 0 ? "partial" : "fallback";
-                (output, cost) = await GenerateAsync(task, state, categories, traceId, cancellationToken).ConfigureAwait(false);
+                (output, cost, failure) = await GenerateAsync(task, state, categories, traceId, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -91,11 +92,11 @@ public sealed class Resolver(
             // 3–4. Fallback: narrowed when the tree confirmed a category, otherwise full.
             var confirmed = traversed.Confirmed;
             mode = confirmed.Count > 0 ? "partial" : "fallback";
-            (output, var cost) = await GenerateAsync(task, state, confirmed, traceId, cancellationToken).ConfigureAwait(false);
+            (output, var cost, failure) = await GenerateAsync(task, state, confirmed, traceId, cancellationToken).ConfigureAwait(false);
             energy += cost;
         }
 
-        return Close(task, new Resolution(output, mode, traversed.Path, confidence, energy, traceId, recall), explored);
+        return Close(task, new Resolution(output, mode, traversed.Path, confidence, energy, traceId, recall, output is null ? failure : null), explored);
     }
 
     /// <summary>
@@ -186,24 +187,26 @@ public sealed class Resolver(
         return (check.Output?.Trim(), check.Energy);
     }
 
-    private async Task<(string? Output, string Mode, double Energy)> FromHabitAsync(TaskDefinition task, Habit habit, string state, string traceId, CancellationToken cancellationToken)
+    /// <summary>The habit's output, its mode and cost, and why the output is missing when it is.</summary>
+    private async Task<(string? Output, string Mode, double Energy, string? Failure)> FromHabitAsync(TaskDefinition task, Habit habit, string state, string traceId, CancellationToken cancellationToken)
     {
         switch (habit.Kind)
         {
             case HabitKind.Answer:
-                return (habit.Text, "habit/answer", 0);
+                return (habit.Text, "habit/answer", 0, null);
             case HabitKind.Template:
                 var filled = await slots.FillAsync(state, habit, task.Language, traceId, cancellationToken).ConfigureAwait(false);
-                return (filled.Output, "habit/template", filled.Energy);
+                return (filled.Output, "habit/template", filled.Energy, filled.FailedReason);
             default:
                 // A procedure is handed to generation as instructions; there is no procedure executor.
                 var procedure = $"{state}\n\n{PromptText.Fill(task.Language.Procedure, ("steps", habit.Steps ?? ""))}";
                 var generated = await fallback.GenerateAsync(procedure, new TextContract(), task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
-                return (generated.Output, "habit/procedure", generated.Energy);
+                return (generated.Output, "habit/procedure", generated.Energy, generated.FailedReason);
         }
     }
 
-    private async Task<(string? Output, double Energy)> GenerateAsync(
+    /// <summary>The fallback's output and cost, and the last contract violation when it produced none.</summary>
+    private async Task<(string? Output, double Energy, string? Failure)> GenerateAsync(
         TaskDefinition task, string state, IReadOnlyList<string> confirmed, string traceId, CancellationToken cancellationToken)
     {
         var labels = confirmed.Select(id => task.Ontology.Find(id)?.Label ?? id).ToList();
@@ -213,19 +216,19 @@ public sealed class Resolver(
         if (scoped is null)
         {
             var result = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return (result.Output, result.Energy);
+            return (result.Output, result.Energy, result.FailedReason);
         }
 
         var narrow = await fallback.GenerateAsync(state, scoped, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (narrow.Output is null || narrow.Output != task.Language.OutOfCategory)
         {
-            return (narrow.Output, narrow.Energy);
+            return (narrow.Output, narrow.Energy, narrow.FailedReason);
         }
 
         // The model says the answer is outside the confirmed category: the judgment above was wrong. Solve in full,
         // without the (wrong) path as context.
         var full = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
-        return (full.Output, narrow.Energy + full.Energy);
+        return (full.Output, narrow.Energy + full.Energy, full.FailedReason);
     }
 
     private Resolution Close(TaskDefinition task, Resolution resolution, string? explored = null)
@@ -245,6 +248,7 @@ public sealed class Resolver(
             Path = resolution.Path,
             Recall = resolution.Recall,
             ExploredOutput = explored,
+            Failure = resolution.Failure,
         });
         return resolution;
     }

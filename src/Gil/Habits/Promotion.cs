@@ -239,7 +239,13 @@ public sealed class RepeatedOutputProposer : IPromotionProposer
 /// <param name="After">The tree with the proposals applied.</param>
 /// <param name="Proposals">What was proposed, with the requests behind each.</param>
 /// <param name="NotApplied">Proposals the tree could not take, with the reason.</param>
-public sealed record PromotionReview(string Before, string After, IReadOnlyList<PromotionProposal> Proposals, IReadOnlyList<string> NotApplied);
+/// <param name="Applied">The proposals the tree took, in order — what a round records once accepted.</param>
+public sealed record PromotionReview(
+    string Before,
+    string After,
+    IReadOnlyList<PromotionProposal> Proposals,
+    IReadOnlyList<string> NotApplied,
+    IReadOnlyList<PromotionProposal> Applied);
 
 /// <summary>Applying proposals to a tree and preparing them for review.</summary>
 public static class Promotion
@@ -287,6 +293,12 @@ public static class Promotion
     {
         ArgumentNullException.ThrowIfNull(proposals);
         var (after, notApplied) = Apply(root, proposals);
-        return new PromotionReview(OntologyYaml.Dump(root), OntologyYaml.Dump(after), proposals, notApplied);
+        var added = new HashSet<(string, string)>();
+        var applied = proposals
+            .Where(p => root.Find(p.Anchor)?.Habits.Any(h => h.Id == p.Habit.Id) != true
+                && after.Find(p.Anchor)?.Habits.Any(h => h.Id == p.Habit.Id) == true
+                && added.Add((p.Anchor, p.Habit.Id)))
+            .ToList();
+        return new PromotionReview(OntologyYaml.Dump(root), OntologyYaml.Dump(after), proposals, notApplied, applied);
     }
 }

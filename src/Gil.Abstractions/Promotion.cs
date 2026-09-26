@@ -68,3 +68,25 @@ public interface IPromotionProposer
 {
     IReadOnlyList<PromotionProposal> Propose(Node root, IReadOnlyList<PromotionCandidate> candidates);
 }
+
+/// <summary>
+/// Where promotion rounds are recorded: when the proposer ran and the habits the tree took. A restart or a later review
+/// reads the rounds back instead of running the proposer again — a second run would see requests the first did not.
+/// The tree at any point is the authored tree with every recorded proposal up to that point applied, in order.
+/// </summary>
+public interface IPromotionLog
+{
+    /// <summary>
+    /// Records a round. <paramref name="atIndex"/> is the number of the task's requests resolved before the proposer
+    /// ran. Pass the proposals applied to the tree (a review lists them as applied); an empty list still
+    /// records that the round ran. A round is recorded once — recording the same task and index again throws.
+    /// Warnings are not stored.
+    /// </summary>
+    void RecordPromotionRound(string task, int atIndex, IReadOnlyList<PromotionProposal> applied);
+
+    /// <summary>The proposals recorded for that round, in the order given, or null when the round was never recorded.</summary>
+    IReadOnlyList<PromotionProposal>? PromotionRound(string task, int atIndex);
+
+    /// <summary>Every recorded proposal of the task, round by round.</summary>
+    IReadOnlyList<(int AtIndex, PromotionProposal Proposal)> PromotionHistory(string task);
+}

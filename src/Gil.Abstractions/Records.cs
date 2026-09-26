@@ -129,4 +129,10 @@ public sealed record TraceOutcome
 
     /// <summary>The cross-check fallback's output when the request was explored (<see cref="TaskPolicy.ExplorationRate"/>); null otherwise.</summary>
     public string? ExploredOutput { get; init; }
+
+    /// <summary>
+    /// Why there is no output: the last violation of the output contract, or the blanks a template could not fill, from
+    /// the step that produced the final result. Null whenever there is an output, and on abstain.
+    /// </summary>
+    public string? Failure { get; init; }
 }

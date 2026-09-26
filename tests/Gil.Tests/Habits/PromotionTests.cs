@@ -146,6 +146,8 @@ public sealed class PromotionTests : IDisposable
         review.Before.Should().NotContain("promoted-x");
         review.After.Should().Contain("promoted-x");
         OntologyYaml.Parse(review.After).Root.Find("bank")!.Habits.Select(h => h.Id).Should().Equal("balance", "promoted-x");
+        review.Applied.Should().Equal(proposal);
+        Promotion.Review(full, [proposal]).Applied.Should().BeEmpty("a full scheme takes nothing, so the round records nothing");
     }
 
     [Fact]

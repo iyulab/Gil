@@ -16,6 +16,23 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Disposing_a_store_releases_its_file_and_leaves_other_stores_working()
+    {
+        var first = Path.Combine(_directory, "first.sqlite");
+        using var other = new SqliteTelemetryStore(Path.Combine(_directory, "other.sqlite"));
+
+        using (var store = new SqliteTelemetryStore(first))
+        {
+            store.OpenTrace("t1", "task", "input");
+        }
+
+        File.Delete(first);
+        File.Exists(first).Should().BeFalse();
+        other.OpenTrace("t2", "task", "input");
+        other.Usage("task").Should().NotBeNull();
+    }
+
+    [Fact]
     public void A_request_is_opened_then_closed_with_its_path_and_recall()
     {
         var path = Path.Combine(_directory, "t.sqlite");
@@ -146,6 +163,65 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_promotion_round_is_recorded_once_and_read_back_in_round_order()
+    {
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "p.sqlite"));
+        store.PromotionRound("task", 50).Should().BeNull("the round never ran");
+
+        store.RecordPromotionRound("task", 100, [CompatibilityFixture.Proposal]);
+        store.RecordPromotionRound("task", 50, []);
+
+        store.PromotionRound("task", 50).Should().BeEmpty("a round that took nothing is still a round");
+        var loaded = store.PromotionRound("task", 100).Should().ContainSingle().Subject;
+        loaded.Should().BeEquivalentTo(CompatibilityFixture.Proposal with { Warnings = [] });
+        loaded.Habit.Slots.Should().Equal(CompatibilityFixture.Proposal.Habit.Slots);
+        store.PromotionHistory("task").Should().ContainSingle().Which.AtIndex.Should().Be(100);
+        store.PromotionHistory("other").Should().BeEmpty();
+        store.Invoking(s => s.RecordPromotionRound("task", 100, [])).Should().Throw<SqliteException>();
+        store.PromotionRound("task", 100).Should().HaveCount(1, "a refused round leaves the recorded one as it was");
+    }
+
+    [Fact]
+    public void A_promoted_habit_is_stored_with_every_field_by_name_and_the_kind_as_a_word()
+    {
+        var json = SqliteTelemetryStore.OptionJson(CompatibilityFixture.Proposal.Habit);
+
+        using var document = JsonDocument.Parse(json);
+        document.RootElement.EnumerateObject().Select(p => p.Name).Should().Equal(
+            "id", "kind", "label", "description", "text", "template", "slots", "steps", "origin");
+        document.RootElement.GetProperty("kind").GetString().Should().Be("template");
+        document.RootElement.GetProperty("text").ValueKind.Should().Be(JsonValueKind.Null);
+        document.RootElement.GetProperty("slots")[0].EnumerateObject().Select(p => p.Name).Should().Equal("name", "instruction", "fixed");
+        json.Should().Contain("접수");
+        SqliteTelemetryStore.HabitFromOptionJson("""{"id": "a", "kind": "answer", "label": "l", "description": "d", "text": "t"}""")
+            .Should().BeEquivalentTo(new Habit { Id = "a", Kind = HabitKind.Answer, Label = "l", Description = "d", Text = "t" });
+    }
+
+    [Fact]
+    public void A_request_without_output_keeps_why_and_an_older_file_gains_the_column()
+    {
+        var path = Path.Combine(_directory, "old.sqlite");
+        using (var old = new SqliteConnection($"Data Source={path};Pooling=False"))
+        {
+            old.Open();
+            using var command = old.CreateCommand();
+            command.CommandText = "CREATE TABLE traces (trace_id TEXT PRIMARY KEY, created_at TEXT, task TEXT, state TEXT, mode TEXT, "
+                + "path TEXT, output TEXT, confidence REAL, energy REAL, feedback_verdict TEXT, feedback_correction TEXT, "
+                + "implicit_signal TEXT, label TEXT, explored_output TEXT, recall TEXT)";
+            command.ExecuteNonQuery();
+        }
+
+        using (var store = new SqliteTelemetryStore(path))
+        {
+            store.OpenTrace("t1", "task", "입력");
+            store.CloseTrace("t1", CompatibilityFixture.Outcome with { Output = null, Failure = "not one of the listed answers" });
+        }
+
+        using var read = Open(path);
+        Row(read, "SELECT output, failure FROM traces")["failure"].Should().Be("not one of the listed answers");
+    }
+
+    [Fact]
     public void Writes_the_compatibility_fixture()
     {
         // Other implementations read this file to check they understand the layout. Set GIL_COMPAT_FIXTURE to
@@ -154,7 +230,9 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
         CompatibilityFixture.Write(target);
 
         using var read = Open(target);
-        Row(read, "SELECT COUNT(*) AS n FROM traces")["n"].Should().Be(1L);
+        Row(read, "SELECT COUNT(*) AS n FROM traces")["n"].Should().Be(2L);
+        Row(read, "SELECT failure FROM traces WHERE trace_id = 'unmet-0001'")["failure"].Should().Be(CompatibilityFixture.Unmet);
+        Row(read, "SELECT COUNT(*) AS n FROM promotions")["n"].Should().Be(1L);
         Row(read, "SELECT COUNT(*) AS n FROM calls")["n"].Should().Be(1L);
         Row(read, "SELECT COUNT(*) AS n FROM habit_reliability")["n"].Should().Be(2L);
     }

@@ -83,6 +83,34 @@ public sealed class ResolverTests
     }
 
     [Fact]
+    public async Task A_contract_never_met_records_the_last_violation_as_the_failure()
+    {
+        var rig = new Rig(Judgments(("work", 0.4)), "not an answer on the list");
+
+        var result = await rig.Resolver.ResolveAsync(Task(), "something else", "t", TestContext.Current.CancellationToken);
+
+        (result.Output, result.Mode).Should().Be(((string?)null, "fallback"));
+        result.Failure.Should().NotBeNullOrEmpty();
+        rig.Sink.Traces["t"].Outcome!.Failure.Should().Be(result.Failure);
+    }
+
+    [Fact]
+    public async Task Unfilled_blanks_are_the_failure_only_when_nothing_answers_after_them()
+    {
+        var stayedEmpty = new Rig(Judgments(("work", 0.95), ("received", 0.95)), "not json", "still not json");
+        var fellBack = new Rig(Judgments(("work", 0.95), ("received", 0.95)), "not json", "still not json", "pto_request");
+
+        var empty = await stayedEmpty.Resolver.ResolveAsync(Task(allowFallback: false), "sent the form", "t", TestContext.Current.CancellationToken);
+        var answered = await fellBack.Resolver.ResolveAsync(Task(), "sent the form", "t", TestContext.Current.CancellationToken);
+
+        empty.Failure.Should().Contain("item");
+        stayedEmpty.Sink.Traces["t"].Outcome!.Failure.Should().Be(empty.Failure);
+        answered.Output.Should().Be("pto_request");
+        answered.Failure.Should().BeNull();
+        fellBack.Sink.Traces["t"].Outcome!.Failure.Should().BeNull();
+    }
+
+    [Fact]
     public async Task A_procedure_habit_is_generated_with_its_steps()
     {
         var rig = new Rig(Judgments(("work", 0.95), ("steps", 0.95)), "done");
