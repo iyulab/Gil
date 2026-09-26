@@ -72,6 +72,9 @@ with what to do.
 
 ### Changed
 
+- The README and package descriptions lead with the parts whose effect was measured — confirmed-answer memory,
+  one-token judgments and narrowed generation, with every call priced — and describe habit promotion as the
+  experimental, off-by-default feature it already was. No behaviour change.
 - IronHive 0.41.0: embeddings go through its OpenAI-compatible embedding generator, which reports the server's usage
   and model. The default transport is IronHive's connection-racing handler, so a `localhost` server that listens on
   IPv4 only is reached without first waiting out the IPv6 attempt.

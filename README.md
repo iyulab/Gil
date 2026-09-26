@@ -1,8 +1,9 @@
 # Gil
 
-A habit runtime for LLM decisions. Repeated requests are answered from memory or from a small tree of cheap
-single-token judgments; only what the tree cannot settle goes to full generation, narrowed to the category the
-tree already confirmed. Answers that keep coming back can be promoted into habits, behind a flag and a review gate.
+Confirmed-answer memory and cheap one-token judgments in front of an LLM. Repeated requests are answered from
+memory or from a small tree of single-token judgments; only what they cannot settle goes to full generation,
+narrowed to the category the tree already confirmed. Every call is recorded and priced. Promoting answers that keep
+coming back into habits is an experimental feature: off unless a task turns it on, and behind a review gate.
 
 **Status: early.** The library is being built from a specification whose behaviour was measured first in a
 research harness. Published on NuGet as `Gil` (with `Gil.Abstractions`) and `Gil.IronHive`; the API may still change within 0.x —
