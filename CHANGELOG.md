@@ -3,6 +3,19 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Added
+
+- **`LexicalMemory`**, memory that needs no model: nearest neighbour over character n-gram TF-IDF (2- and
+  3-grams by default), so it works in any script without a tokenizer and a lookup costs no call. Fill it from the
+  feedback history with `MemoryReplay`. Its similarities are on their own scale, so choose the task's
+  `MemoryThreshold` for it rather than reusing an embedding memory's.
+- **`new Resolver(memory, sink)`**, a resolver without models: memory answers what it can and every other request
+  abstains (`abstain`, empty path, null confidence, the miss in `Recall`) without a call. The task's tree,
+  thresholds, contract and language are not used — a bare root will do. Memory learns from feedback only through a
+  sink, as before.
+
 ## 0.2.0
 
 ### Breaking

@@ -58,7 +58,8 @@ public sealed record TaskPolicy
 
     /// <summary>
     /// Similarity at or above which a remembered answer is returned. There is no default: similarity scales differ
-    /// between embedding models. Null skips the memory stage and never updates memory.
+    /// between embedding models, and between an embedding memory and one that compares characters, so the value is
+    /// chosen for the memory in use. Null skips the memory stage and never updates memory.
     /// </summary>
     public double? MemoryThreshold { get; init; }
 
@@ -140,7 +141,7 @@ public interface IMemory
 /// <param name="Output">The answer; null when the contract was never met, or on abstain.</param>
 /// <param name="Mode">memory, habit/answer, habit/template, habit/procedure, partial, fallback or abstain.</param>
 /// <param name="Path">The tree steps taken; empty for memory answers.</param>
-/// <param name="Confidence">Null for memory answers — a similarity is not a judgment probability.</param>
+/// <param name="Confidence">Null for memory answers — a similarity is not a judgment probability — and when nothing was judged.</param>
 /// <param name="Energy">Total cost of every call made for this request.</param>
 /// <param name="TraceId">The request's id; feedback refers to it.</param>
 /// <param name="Recall">The nearest remembered request when memory was consulted, hit or miss.</param>

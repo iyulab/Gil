@@ -66,6 +66,13 @@ internal static class ReadmeExample
         Console.WriteLine($"{result.Mode}: {result.Output}");
         await resolver.FeedbackAsync(task, result.TraceId, correct: true);
 
+        var lexical = new LexicalMemory();
+        await MemoryReplay.From(store.FeedbackHistory("support")).ApplyAsync(lexical, "support", traceId: "startup");
+        var offline = new Resolver(lexical, store);
+        var bare = OntologyYaml.Parse("id: root").Root;   // the tree is not used without models
+        var answered = await offline.ResolveAsync(new TaskDefinition("support", new TextContract(), bare,
+            new TaskPolicy { Thresholds = new([1.0], 1.0), MemoryThreshold = 0.5 }, PromptLanguage.English), "I lost my card");
+
         await remembered.RebuildAsync(task.Name, store.FeedbackHistory(task.Name), traceId: "startup");
         await MemoryReplay.From(store.FeedbackHistory(task.Name)).ApplyAsync(memory, task.Name, traceId: "rebuild");
 

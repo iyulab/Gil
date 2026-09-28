@@ -10,17 +10,48 @@ namespace Gil;
 /// then the full fallback — or a hand-off to a person when the task does not allow generation. The output contract
 /// is the same whichever path answered; <see cref="Resolution.Mode"/> tells which one did.
 /// </summary>
-public sealed class Resolver(
-    GreedyTraverser traverser,
-    FallbackGenerator fallback,
-    SlotFiller slots,
-    ITelemetrySink? sink = null,
-    IMemory? memory = null,
-    IHabitStatistics? statistics = null,
-    Random? random = null,
-    IShadowEvidenceSource? shadowEvidence = null)
+public sealed class Resolver
 {
-    private readonly Random _random = random ?? Random.Shared;
+    private readonly Models? _models;
+    private readonly ITelemetrySink? _sink;
+    private readonly IMemory? _memory;
+    private readonly IHabitStatistics? _statistics;
+    private readonly IShadowEvidenceSource? _shadowEvidence;
+    private readonly Random _random;
+
+    /// <summary>A resolver with every stage: memory (when given), the tree, and the fallback.</summary>
+    public Resolver(
+        GreedyTraverser traverser,
+        FallbackGenerator fallback,
+        SlotFiller slots,
+        ITelemetrySink? sink = null,
+        IMemory? memory = null,
+        IHabitStatistics? statistics = null,
+        Random? random = null,
+        IShadowEvidenceSource? shadowEvidence = null)
+    {
+        ArgumentNullException.ThrowIfNull(traverser);
+        ArgumentNullException.ThrowIfNull(fallback);
+        ArgumentNullException.ThrowIfNull(slots);
+        _models = new Models(traverser, fallback, slots);
+        (_sink, _memory, _statistics, _shadowEvidence) = (sink, memory, statistics, shadowEvidence);
+        _random = random ?? Random.Shared;
+    }
+
+    /// <summary>
+    /// A resolver without models: memory answers what it can and every other request abstains — <see cref="Resolution.Mode"/>
+    /// <c>abstain</c> with an empty path, a null confidence (nothing was judged) and the <see cref="Resolution.Recall"/> of the
+    /// miss. No call is made, so it runs where no model is reachable. The task's tree, thresholds, contract and language
+    /// are not used; a bare root will do. Memory learns from <see cref="FeedbackAsync"/> only through
+    /// <paramref name="sink"/>, which holds the request a verdict refers to; without one, fill it from confirmed answers
+    /// with <see cref="Memory.MemoryReplay"/>.
+    /// </summary>
+    public Resolver(IMemory memory, ITelemetrySink? sink = null)
+    {
+        ArgumentNullException.ThrowIfNull(memory);
+        (_memory, _sink) = (memory, sink);
+        _random = Random.Shared;
+    }
 
     public async Task<Resolution> ResolveAsync(TaskDefinition task, string state, string? traceId = null, CancellationToken cancellationToken = default)
     {
@@ -43,17 +74,17 @@ public sealed class Resolver(
 
     private async Task<Resolution> ResolveCoreAsync(TaskDefinition task, string state, string traceId, CancellationToken cancellationToken)
     {
-        sink?.OpenTrace(traceId, task.Name, state);
+        _sink?.OpenTrace(traceId, task.Name, state);
 
         // 1. Memory. A hit never touches the tree, so it is not evidence for the tree's habits either.
         Recall? recall = null;
         var energy = 0.0;
-        if (memory is not null && task.Policy.MemoryThreshold is double threshold)
+        if (_memory is not null && task.Policy.MemoryThreshold is double threshold)
         {
             MemoryMatch? match = null;
             try
             {
-                (match, var cost) = await memory.LookupAsync(task.Name, state, traceId, cancellationToken).ConfigureAwait(false);
+                (match, var cost) = await _memory.LookupAsync(task.Name, state, traceId, cancellationToken).ConfigureAwait(false);
                 energy += cost;
             }
             catch (Exception error) when (IsDegradable(task, error, cancellationToken))
@@ -71,11 +102,17 @@ public sealed class Resolver(
             }
         }
 
+        if (_models is not Models models)
+        {
+            // Without models nothing else can answer; nothing was judged, so there is no confidence either.
+            return Close(task, new Resolution(null, "abstain", [], null, energy, traceId, recall));
+        }
+
         // 2. The tree, with shadows rebuilt per request: they are a pure function of the feedback so far.
-        var shadows = task.Policy.Shadows && shadowEvidence is not null
-            ? ShadowIndex.Build(shadowEvidence.ShadowEvidence(task.Name), task.Ontology, task.Policy.NonAnswers)
+        var shadows = task.Policy.Shadows && _shadowEvidence is not null
+            ? ShadowIndex.Build(_shadowEvidence.ShadowEvidence(task.Name), task.Ontology, task.Policy.NonAnswers)
             : null;
-        var traversed = await traverser.TraverseAsync(state, task.Ontology, task.Policy.Thresholds, task.Language, traceId, shadows, cancellationToken).ConfigureAwait(false);
+        var traversed = await models.Traverser.TraverseAsync(state, task.Ontology, task.Policy.Thresholds, task.Language, traceId, shadows, cancellationToken).ConfigureAwait(false);
         energy += traversed.Energy;
         var confidence = traversed.Path.Count > 0 ? traversed.Path[^1].P : 0;
         string? output;
@@ -84,7 +121,7 @@ public sealed class Resolver(
         string? failure = null;
         if (traversed.Habit is Habit habit)
         {
-            (output, mode, var cost, failure) = await FromHabitAsync(task, habit, state, traceId, cancellationToken).ConfigureAwait(false);
+            (output, mode, var cost, failure) = await FromHabitAsync(models, task, habit, state, traceId, cancellationToken).ConfigureAwait(false);
             energy += cost;
             if (output is null && habit.Kind == HabitKind.Template && task.Policy.AllowFallback)
             {
@@ -92,11 +129,11 @@ public sealed class Resolver(
                 // category — what the judgments confirmed before the one that chose the habit.
                 var categories = traversed.Confirmed.SkipLast(1).ToList();
                 mode = categories.Count > 0 ? "partial" : "fallback";
-                (output, cost, failure) = await GenerateAsync(task, state, categories, traceId, cancellationToken).ConfigureAwait(false);
+                (output, cost, failure) = await GenerateAsync(models, task, state, categories, traceId, cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                (explored, cost) = await ExploreAsync(task, habit, output, state, traceId, cancellationToken).ConfigureAwait(false);
+                (explored, cost) = await ExploreAsync(models, task, habit, output, state, traceId, cancellationToken).ConfigureAwait(false);
             }
 
             energy += cost;
@@ -110,7 +147,7 @@ public sealed class Resolver(
             // 3–4. Fallback: narrowed when the tree confirmed a category, otherwise full.
             var confirmed = traversed.Confirmed;
             mode = confirmed.Count > 0 ? "partial" : "fallback";
-            (output, var cost, failure) = await GenerateAsync(task, state, confirmed, traceId, cancellationToken).ConfigureAwait(false);
+            (output, var cost, failure) = await GenerateAsync(models, task, state, confirmed, traceId, cancellationToken).ConfigureAwait(false);
             energy += cost;
         }
 
@@ -125,44 +162,44 @@ public sealed class Resolver(
     public async Task FeedbackAsync(TaskDefinition task, string traceId, bool correct, string? correction = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(task);
-        if (sink is null)
+        if (_sink is null)
         {
             return;
         }
 
-        sink.RecordFeedback(traceId, correct ? "correct" : "wrong", correction);
-        if (sink.FindTrace(traceId) is not TraceSummary trace)
+        _sink.RecordFeedback(traceId, correct ? "correct" : "wrong", correction);
+        if (_sink.FindTrace(traceId) is not TraceSummary trace)
         {
             return;
         }
 
-        if (statistics is not null && trace.Path.Count > 0 && trace.Mode is string mode)
+        if (_statistics is not null && trace.Path.Count > 0 && trace.Mode is string mode)
         {
             var credit = HabitAttribution.Attribute(task.Ontology, trace.Path, mode, trace.Output, correct, correction);
             foreach (var item in credit.Reinforce)
             {
-                statistics.RecordOutcome(task.Name, item, new HabitCounts(Reinforced: 1));
+                _statistics.RecordOutcome(task.Name, item, new HabitCounts(Reinforced: 1));
             }
 
             if (credit.Penalize is not null)
             {
-                statistics.RecordOutcome(task.Name, credit.Penalize, new HabitCounts(Penalized: 1));
+                _statistics.RecordOutcome(task.Name, credit.Penalize, new HabitCounts(Penalized: 1));
             }
 
             if (credit.Missed is not null)
             {
-                statistics.RecordOutcome(task.Name, credit.Missed, new HabitCounts(Missed: 1));
+                _statistics.RecordOutcome(task.Name, credit.Missed, new HabitCounts(Missed: 1));
             }
         }
 
-        if (memory is null || task.Policy.MemoryThreshold is null)
+        if (_memory is null || task.Policy.MemoryThreshold is null)
         {
             return;
         }
 
         if (!correct && trace.Mode == "memory" && trace.Recall?.Source is string source)
         {
-            memory.Forget(task.Name, source);
+            _memory.Forget(task.Name, source);
         }
 
         var answer = correct ? trace.Output : correction;
@@ -170,7 +207,7 @@ public sealed class Resolver(
         {
             try
             {
-                await memory.RememberAsync(task.Name, traceId, trace.State, answer, traceId, cancellationToken).ConfigureAwait(false);
+                await _memory.RememberAsync(task.Name, traceId, trace.State, answer, traceId, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (IsDegradable(task, error, cancellationToken))
             {
@@ -181,7 +218,7 @@ public sealed class Resolver(
 
     /// <summary>What memory did for a request: <c>off</c>, <c>hit</c>, <c>miss</c>, or <c>failed</c> (treated as a miss).</summary>
     private string MemoryOutcome(TaskDefinition task, Recall? recall) =>
-        memory is null || task.Policy.MemoryThreshold is null ? "off"
+        _memory is null || task.Policy.MemoryThreshold is null ? "off"
         : recall?.Error is not null ? "failed"
         : recall?.Hit == true ? "hit"
         : "miss";
@@ -198,7 +235,7 @@ public sealed class Resolver(
     /// explores consumes no randomness.
     /// </summary>
     private async Task<(string? Output, double Energy)> ExploreAsync(
-        TaskDefinition task, Habit habit, string? output, string state, string traceId, CancellationToken cancellationToken)
+        Models models, TaskDefinition task, Habit habit, string? output, string state, string traceId, CancellationToken cancellationToken)
     {
         var rate = task.Policy.ExplorationRate;
         if (habit.Kind != HabitKind.Answer || rate <= 0 || _random.NextDouble() >= rate)
@@ -206,33 +243,33 @@ public sealed class Resolver(
             return (null, 0);
         }
 
-        var check = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var check = await models.Fallback.GenerateAsync(state, task.Contract, task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
         var agreed = check.Output is not null && output is not null && check.Output.Trim() == output.Trim();
-        statistics?.RecordOutcome(task.Name, habit.Id, new HabitCounts(Explored: 1, Disputed: agreed ? 0 : 1));
+        _statistics?.RecordOutcome(task.Name, habit.Id, new HabitCounts(Explored: 1, Disputed: agreed ? 0 : 1));
         return (check.Output?.Trim(), check.Energy);
     }
 
     /// <summary>The habit's output, its mode and cost, and why the output is missing when it is.</summary>
-    private async Task<(string? Output, string Mode, double Energy, string? Failure)> FromHabitAsync(TaskDefinition task, Habit habit, string state, string traceId, CancellationToken cancellationToken)
+    private static async Task<(string? Output, string Mode, double Energy, string? Failure)> FromHabitAsync(Models models, TaskDefinition task, Habit habit, string state, string traceId, CancellationToken cancellationToken)
     {
         switch (habit.Kind)
         {
             case HabitKind.Answer:
                 return (habit.Text, "habit/answer", 0, null);
             case HabitKind.Template:
-                var filled = await slots.FillAsync(state, habit, task.Language, traceId, cancellationToken).ConfigureAwait(false);
+                var filled = await models.Slots.FillAsync(state, habit, task.Language, traceId, cancellationToken).ConfigureAwait(false);
                 return (filled.Output, "habit/template", filled.Energy, filled.FailedReason);
             default:
                 // A procedure is handed to generation as instructions; there is no procedure executor.
                 var procedure = $"{state}\n\n{PromptText.Fill(task.Language.Procedure, ("steps", habit.Steps ?? ""))}";
-                var generated = await fallback.GenerateAsync(procedure, new TextContract(), task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+                var generated = await models.Fallback.GenerateAsync(procedure, new TextContract(), task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
                 return (generated.Output, "habit/procedure", generated.Energy, generated.FailedReason);
         }
     }
 
     /// <summary>The fallback's output and cost, and the last contract violation when it produced none.</summary>
-    private async Task<(string? Output, double Energy, string? Failure)> GenerateAsync(
-        TaskDefinition task, string state, IReadOnlyList<string> confirmed, string traceId, CancellationToken cancellationToken)
+    private static async Task<(string? Output, double Energy, string? Failure)> GenerateAsync(
+        Models models, TaskDefinition task, string state, IReadOnlyList<string> confirmed, string traceId, CancellationToken cancellationToken)
     {
         var labels = confirmed.Select(id => task.Ontology.Find(id)?.Label ?? id).ToList();
         var scoped = task.Policy.FallbackScope == FallbackScope.Path && confirmed.Count > 0 && task.Contract is IScopableContract scopable
@@ -240,11 +277,11 @@ public sealed class Resolver(
             : null;
         if (scoped is null)
         {
-            var result = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var result = await models.Fallback.GenerateAsync(state, task.Contract, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
             return (result.Output, result.Energy, result.FailedReason);
         }
 
-        var narrow = await fallback.GenerateAsync(state, scoped, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var narrow = await models.Fallback.GenerateAsync(state, scoped, task.Language, traceId, labels, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (narrow.Output is null || narrow.Output != task.Language.OutOfCategory)
         {
             return (narrow.Output, narrow.Energy, narrow.FailedReason);
@@ -252,7 +289,7 @@ public sealed class Resolver(
 
         // The model says the answer is outside the confirmed category: the judgment above was wrong. Solve in full,
         // without the (wrong) path as context.
-        var full = await fallback.GenerateAsync(state, task.Contract, task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var full = await models.Fallback.GenerateAsync(state, task.Contract, task.Language, traceId, cancellationToken: cancellationToken).ConfigureAwait(false);
         return (full.Output, narrow.Energy + full.Energy, full.FailedReason);
     }
 
@@ -261,10 +298,10 @@ public sealed class Resolver(
         // Visits are counted per task: the same ids recur across tasks sharing a store.
         if (resolution.Path.Count > 0)
         {
-            statistics?.RecordPath(task.Name, resolution.Path);
+            _statistics?.RecordPath(task.Name, resolution.Path);
         }
 
-        sink?.CloseTrace(resolution.TraceId, new TraceOutcome
+        _sink?.CloseTrace(resolution.TraceId, new TraceOutcome
         {
             Mode = resolution.Mode,
             Output = resolution.Output,
@@ -277,4 +314,7 @@ public sealed class Resolver(
         });
         return resolution;
     }
+
+    /// <summary>The stages that call a model.</summary>
+    private sealed record Models(GreedyTraverser Traverser, FallbackGenerator Fallback, SlotFiller Slots);
 }
