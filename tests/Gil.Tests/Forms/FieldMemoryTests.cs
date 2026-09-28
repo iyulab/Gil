@@ -95,9 +95,10 @@ public sealed class FieldMemoryTests
         memory.Put(form, Doc("d2", ("component", "disk"), ("summary", "slow"), ("team", "storage")));
         memory.Put(form, Doc("d3", ("component", "disk"), ("summary", "full"), ("team", "storage")));
 
-        // summary = slow would split network/storage evenly, but it is not a declared dependency.
+        // summary = slow would split network/storage evenly, but it is not a declared dependency. The places left are
+        // filled from the overall frequency, without evidence.
         memory.Rank(form, "team", Known(("component", "vpn"), ("summary", "slow")), 3)
-            .Select(c => (c.Value, c.Score)).Should().Equal(("network", 1.0));
+            .Select(c => (c.Value, c.Score, c.Evidence)).Should().Equal(("network", 1.0, "component: vpn"), ("storage", 2.0 / 3, null));
     }
 
     [Fact]

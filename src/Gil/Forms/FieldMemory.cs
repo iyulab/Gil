@@ -68,9 +68,9 @@ public sealed class FieldMemory
 
     /// <summary>
     /// The <paramref name="count"/> values most likely for <paramref name="field"/> given the values known so far, best
-    /// first. Falls back to the field's most frequently settled values when none of the known values has been seen as a
-    /// key. Ties go to the ordinally smaller value in both cases, so the order documents arrived in never matters. Empty
-    /// when nothing was settled.
+    /// first: the values settled under the known keys (with the key that backs each most as its evidence), then, in the
+    /// places left, the field's most frequently settled values (without evidence). Ties go to the ordinally smaller value
+    /// in both parts, so the order documents arrived in never matters. Empty when nothing was settled.
     /// </summary>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
@@ -102,18 +102,15 @@ public sealed class FieldMemory
             }
         }
 
-        if (scores.Count > 0)
-        {
-            return [.. scores
-                .OrderByDescending(s => s.Value.Score)
-                .ThenBy(s => s.Key, StringComparer.Ordinal)
-                .Take(count)
-                .Select(s => new FieldCandidate(s.Key, s.Value.Score, FieldSource.SettledFieldMemory, $"{s.Value.Key.Field}: {s.Value.Key.Value}"))];
-        }
-
-        return index.Values.TryGetValue(new Slot(field, null), out var overall)
-            ? [.. overall.Shares().Take(count).Select(s => new FieldCandidate(s.Value, s.Share, FieldSource.SettledFieldMemory, null))]
+        var keyed = scores
+            .OrderByDescending(s => s.Value.Score)
+            .ThenBy(s => s.Key, StringComparer.Ordinal)
+            .Take(count)
+            .Select(s => new FieldCandidate(s.Key, s.Value.Score, FieldSource.SettledFieldMemory, $"{s.Value.Key.Field}: {s.Value.Key.Value}"));
+        var overall = index.Values.TryGetValue(new Slot(field, null), out var totals)
+            ? totals.Shares().Select(s => new FieldCandidate(s.Value, s.Share, FieldSource.SettledFieldMemory, null))
             : [];
+        return [.. keyed.Concat(overall).DistinctBy(c => c.Value, StringComparer.Ordinal).Take(count)];
     }
 
     /// <summary>The keys the document's values give <paramref name="field"/>: every other field that supports it, with a short enough value.</summary>
