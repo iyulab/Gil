@@ -302,6 +302,10 @@ Each field is tried in a fixed order, and `FieldSuggestion.Source` says which la
    field). It is asked only when neither memory had evidence, so it never overrides a value the document supports.
 4. The values settled most often for the field.
 
+On a machine without a large model, leave the model out: measured on requests a lexical memory did not answer on its
+own, small local models (2B and 4B, quantised) were right less often than that memory's nearest document, and took
+seconds per field on an office laptop.
+
 When no layer has a candidate, a person decides. Only a model reports `Confidence`: a frequency or a similarity is not
 a probability. Give `ResolverFieldModel` the same sink and name each task `form/field`, and a model's suggestion is
 traced like any resolved request — `FeedbackAsync` on its trace id then reaches the tree.
