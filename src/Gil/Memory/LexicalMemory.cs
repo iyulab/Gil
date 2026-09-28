@@ -122,44 +122,40 @@ public sealed class LexicalMemory : IMemory
         return counts;
     }
 
-    /// <summary>Rows kept in the order they were remembered; ties go to the earlier row.</summary>
+    /// <summary>
+    /// Rows kept in the order they were remembered; ties go to the earlier row. Each distinct n-gram gets an id once, and a
+    /// row holds its ids sorted with their counts and weights, so a lookup compares two sorted lists instead of hashing.
+    /// </summary>
     private sealed class Index
     {
-        private readonly List<string> _keys = [];
-        private readonly List<string> _answers = [];
-        private readonly List<Dictionary<string, int>> _grams = [];
+        private readonly List<Row> _rows = [];
         private readonly Dictionary<string, int> _position = [];
-        private readonly Dictionary<string, int> _frequency = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _ids = new(StringComparer.Ordinal);
+        private readonly List<int> _frequency = [];
 
-        // Each row's n-gram weights and norm under the inverse document frequencies taken when there were _takenAt rows.
-        private readonly List<Dictionary<string, double>> _weights = [];
-        private readonly List<double> _norms = [];
-        private Dictionary<string, double> _idf = new(StringComparer.Ordinal);
+        // The inverse document frequency of every id known when there were _takenAt rows; later ids had none.
+        private double[] _idf = [];
         private int _takenAt;
 
-        public int Count => _keys.Count;
+        public int Count => _rows.Count;
 
         public void Put(string key, Dictionary<string, int> grams, string answer)
         {
+            var (ids, counts) = Intern(grams);
+            var row = new Row(key, answer, ids, counts, new double[ids.Length]);
+            row.Norm = Weigh(ids, counts, row.Weights);
             if (_position.TryGetValue(key, out var at))
             {
-                Tally(_grams[at], -1);
-                Tally(grams, +1);
-                (_grams[at], _answers[at]) = (grams, answer);
-                (_weights[at], _norms[at]) = Weigh(grams);
+                Tally(_rows[at].Ids, -1);
+                _rows[at] = row;
             }
             else
             {
-                Tally(grams, +1);
-                _position[key] = _keys.Count;
-                _keys.Add(key);
-                _answers.Add(answer);
-                _grams.Add(grams);
-                var (weights, norm) = Weigh(grams);
-                _weights.Add(weights);
-                _norms.Add(norm);
+                _position[key] = _rows.Count;
+                _rows.Add(row);
             }
 
+            Tally(ids, +1);
             Refresh();
         }
 
@@ -170,15 +166,11 @@ public sealed class LexicalMemory : IMemory
                 return;
             }
 
-            Tally(_grams[at], -1);
-            _keys.RemoveAt(at);
-            _answers.RemoveAt(at);
-            _grams.RemoveAt(at);
-            _weights.RemoveAt(at);
-            _norms.RemoveAt(at);
-            for (var i = at; i < _keys.Count; i++)
+            Tally(_rows[at].Ids, -1);
+            _rows.RemoveAt(at);
+            for (var i = at; i < _rows.Count; i++)
             {
-                _position[_keys[i]] = i;
+                _position[_rows[i].Key] = i;
             }
 
             Refresh();
@@ -187,82 +179,134 @@ public sealed class LexicalMemory : IMemory
         /// <summary>The most similar row; on a tie, the one remembered first.</summary>
         public (string Key, double Similarity, string Answer) Nearest(Dictionary<string, int> query)
         {
-            var (weights, queryNorm) = Weigh(query);
+            // An n-gram no row has ever held matches nothing, but it still weighs in the query's norm.
+            var known = new List<(int Id, int Count)>(query.Count);
+            var squares = 0.0;
+            foreach (var (gram, count) in query)
+            {
+                if (_ids.TryGetValue(gram, out var id))
+                {
+                    known.Add((id, count));
+                }
+                else
+                {
+                    squares += Math.Pow(count * Smoothed(0), 2);
+                }
+            }
+
+            known.Sort();
+            var ids = known.Select(k => k.Id).ToArray();
+            var weights = new double[ids.Length];
+            var queryNorm = Math.Sqrt(squares + Math.Pow(Weigh(ids, [.. known.Select(k => k.Count)], weights), 2));
+
             var best = 0;
             var bestSimilarity = double.NegativeInfinity;
-            for (var i = 0; i < _weights.Count; i++)
+            for (var r = 0; r < _rows.Count; r++)
             {
+                var row = _rows[r];
                 var similarity = 0.0;
-                if (queryNorm > 0 && _norms[i] > 0)
+                if (queryNorm > 0 && row.Norm > 0)
                 {
-                    var row = _weights[i];
-                    foreach (var (gram, weight) in weights)
+                    for (int i = 0, j = 0; i < ids.Length && j < row.Ids.Length;)
                     {
-                        if (row.TryGetValue(gram, out var other))
+                        if (ids[i] == row.Ids[j])
                         {
-                            similarity += weight * other;
+                            similarity += weights[i++] * row.Weights[j++];
+                        }
+                        else if (ids[i] < row.Ids[j])
+                        {
+                            i++;
+                        }
+                        else
+                        {
+                            j++;
                         }
                     }
 
-                    similarity /= queryNorm * _norms[i];
+                    similarity /= queryNorm * row.Norm;
                 }
 
                 if (similarity > bestSimilarity)
                 {
-                    (best, bestSimilarity) = (i, similarity);
+                    (best, bestSimilarity) = (r, similarity);
                 }
             }
 
-            return (_keys[best], bestSimilarity, _answers[best]);
+            return (_rows[best].Key, bestSimilarity, _rows[best].Answer);
+        }
+
+        private (int[] Ids, int[] Counts) Intern(Dictionary<string, int> grams)
+        {
+            var pairs = new (int Id, int Count)[grams.Count];
+            var n = 0;
+            foreach (var (gram, count) in grams)
+            {
+                if (!_ids.TryGetValue(gram, out var id))
+                {
+                    _ids[gram] = id = _ids.Count;
+                    _frequency.Add(0);
+                }
+
+                pairs[n++] = (id, count);
+            }
+
+            Array.Sort(pairs);
+            return ([.. pairs.Select(p => p.Id)], [.. pairs.Select(p => p.Count)]);
         }
 
         /// <summary>Takes the frequencies afresh once the row count has moved by a tenth (at least one) since last time.</summary>
         private void Refresh()
         {
-            if (Math.Abs(_keys.Count - _takenAt) < Math.Max(1, _takenAt / 10))
+            if (Math.Abs(_rows.Count - _takenAt) < Math.Max(1, _takenAt / 10))
             {
                 return;
             }
 
-            _takenAt = _keys.Count;
-            _idf = _frequency.ToDictionary(f => f.Key, f => Smoothed(f.Value), StringComparer.Ordinal);
-            for (var i = 0; i < _grams.Count; i++)
+            _takenAt = _rows.Count;
+            _idf = [.. _frequency.Select(Smoothed)];
+            foreach (var row in _rows)
             {
-                (_weights[i], _norms[i]) = Weigh(_grams[i]);
+                row.Norm = Weigh(row.Ids, row.Counts, row.Weights);
             }
         }
 
-        private (Dictionary<string, double> Weights, double Norm) Weigh(Dictionary<string, int> grams)
+        /// <summary>Fills <paramref name="weights"/> with count × idf and returns their norm.</summary>
+        private double Weigh(int[] ids, int[] counts, double[] weights)
         {
-            var weights = new Dictionary<string, double>(grams.Count, StringComparer.Ordinal);
             var squares = 0.0;
-            foreach (var (gram, count) in grams)
+            for (var i = 0; i < ids.Length; i++)
             {
-                var weight = count * (_idf.TryGetValue(gram, out var idf) ? idf : Smoothed(0));
-                weights[gram] = weight;
-                squares += weight * weight;
+                weights[i] = counts[i] * (ids[i] < _idf.Length ? _idf[ids[i]] : Smoothed(0));
+                squares += weights[i] * weights[i];
             }
 
-            return (weights, Math.Sqrt(squares));
+            return Math.Sqrt(squares);
         }
 
         /// <summary>Smoothed inverse document frequency at the last refresh: never zero, highest for an n-gram no row had.</summary>
         private double Smoothed(int frequency) => Math.Log((1.0 + _takenAt) / (1.0 + frequency)) + 1;
 
-        private void Tally(Dictionary<string, int> grams, int delta)
+        private void Tally(int[] ids, int delta)
         {
-            foreach (var gram in grams.Keys)
+            foreach (var id in ids)
             {
-                var count = _frequency.GetValueOrDefault(gram) + delta;
-                if (count == 0)
-                {
-                    _frequency.Remove(gram);
-                }
-                else
-                {
-                    _frequency[gram] = count;
-                }
+                _frequency[id] += delta;
             }
+        }
+
+        private sealed class Row(string key, string answer, int[] ids, int[] counts, double[] weights)
+        {
+            public string Key { get; } = key;
+
+            public string Answer { get; } = answer;
+
+            public int[] Ids { get; } = ids;
+
+            public int[] Counts { get; } = counts;
+
+            public double[] Weights { get; } = weights;
+
+            public double Norm { get; set; }
         }
     }
 }
