@@ -11,8 +11,10 @@ namespace Gil.Memory;
 /// <remarks>
 /// Similarities are on a different scale from embedding cosines — text that means the same but shares few characters
 /// scores low — so a task's <see cref="TaskPolicy.MemoryThreshold"/> has to be chosen for this memory. Weights follow the
-/// remembered answers: document frequencies change as rows are added or forgotten, and every lookup uses the current
-/// ones. Not thread-safe; one instance serves one caller at a time.
+/// remembered answers: the inverse document frequencies are taken afresh whenever the number of remembered answers has
+/// moved by a tenth (or by one, while there are fewer than ten) since they were last taken, and every row and every
+/// lookup is weighted with the same ones in between — so a similarity stays a cosine, 1 for the same text, and changes in
+/// steps rather than on every answer remembered. Not thread-safe; one instance serves one caller at a time.
 /// </remarks>
 public sealed class LexicalMemory : IMemory
 {
@@ -129,8 +131,11 @@ public sealed class LexicalMemory : IMemory
         private readonly Dictionary<string, int> _position = [];
         private readonly Dictionary<string, int> _frequency = new(StringComparer.Ordinal);
 
-        // Row norms under the current document frequencies; cleared whenever a row is added or removed.
-        private double[]? _norms;
+        // Each row's n-gram weights and norm under the inverse document frequencies taken when there were _takenAt rows.
+        private readonly List<Dictionary<string, double>> _weights = [];
+        private readonly List<double> _norms = [];
+        private Dictionary<string, double> _idf = new(StringComparer.Ordinal);
+        private int _takenAt;
 
         public int Count => _keys.Count;
 
@@ -139,19 +144,23 @@ public sealed class LexicalMemory : IMemory
             if (_position.TryGetValue(key, out var at))
             {
                 Tally(_grams[at], -1);
-                _grams[at] = grams;
-                _answers[at] = answer;
+                Tally(grams, +1);
+                (_grams[at], _answers[at]) = (grams, answer);
+                (_weights[at], _norms[at]) = Weigh(grams);
             }
             else
             {
+                Tally(grams, +1);
                 _position[key] = _keys.Count;
                 _keys.Add(key);
                 _answers.Add(answer);
                 _grams.Add(grams);
+                var (weights, norm) = Weigh(grams);
+                _weights.Add(weights);
+                _norms.Add(norm);
             }
 
-            Tally(grams, +1);
-            _norms = null;
+            Refresh();
         }
 
         public void Remove(string key)
@@ -165,37 +174,37 @@ public sealed class LexicalMemory : IMemory
             _keys.RemoveAt(at);
             _answers.RemoveAt(at);
             _grams.RemoveAt(at);
+            _weights.RemoveAt(at);
+            _norms.RemoveAt(at);
             for (var i = at; i < _keys.Count; i++)
             {
                 _position[_keys[i]] = i;
             }
 
-            _norms = null;
+            Refresh();
         }
 
         /// <summary>The most similar row; on a tie, the one remembered first.</summary>
         public (string Key, double Similarity, string Answer) Nearest(Dictionary<string, int> query)
         {
-            var norms = _norms ??= [.. _grams.Select(Norm)];
-            var weights = query.ToDictionary(g => g.Key, g => g.Value * Idf(g.Key), StringComparer.Ordinal);
-            var queryNorm = Math.Sqrt(weights.Values.Sum(w => w * w));
+            var (weights, queryNorm) = Weigh(query);
             var best = 0;
             var bestSimilarity = double.NegativeInfinity;
-            for (var i = 0; i < _grams.Count; i++)
+            for (var i = 0; i < _weights.Count; i++)
             {
                 var similarity = 0.0;
-                if (queryNorm > 0 && norms[i] > 0)
+                if (queryNorm > 0 && _norms[i] > 0)
                 {
-                    var row = _grams[i];
+                    var row = _weights[i];
                     foreach (var (gram, weight) in weights)
                     {
-                        if (row.TryGetValue(gram, out var count))
+                        if (row.TryGetValue(gram, out var other))
                         {
-                            similarity += weight * count * Idf(gram);
+                            similarity += weight * other;
                         }
                     }
 
-                    similarity /= queryNorm * norms[i];
+                    similarity /= queryNorm * _norms[i];
                 }
 
                 if (similarity > bestSimilarity)
@@ -207,10 +216,38 @@ public sealed class LexicalMemory : IMemory
             return (_keys[best], bestSimilarity, _answers[best]);
         }
 
-        /// <summary>Smoothed inverse document frequency: never zero, highest for an n-gram no row has.</summary>
-        private double Idf(string gram) => Math.Log((1.0 + _keys.Count) / (1.0 + _frequency.GetValueOrDefault(gram))) + 1;
+        /// <summary>Takes the frequencies afresh once the row count has moved by a tenth (at least one) since last time.</summary>
+        private void Refresh()
+        {
+            if (Math.Abs(_keys.Count - _takenAt) < Math.Max(1, _takenAt / 10))
+            {
+                return;
+            }
 
-        private double Norm(Dictionary<string, int> grams) => Math.Sqrt(grams.Sum(g => Math.Pow(g.Value * Idf(g.Key), 2)));
+            _takenAt = _keys.Count;
+            _idf = _frequency.ToDictionary(f => f.Key, f => Smoothed(f.Value), StringComparer.Ordinal);
+            for (var i = 0; i < _grams.Count; i++)
+            {
+                (_weights[i], _norms[i]) = Weigh(_grams[i]);
+            }
+        }
+
+        private (Dictionary<string, double> Weights, double Norm) Weigh(Dictionary<string, int> grams)
+        {
+            var weights = new Dictionary<string, double>(grams.Count, StringComparer.Ordinal);
+            var squares = 0.0;
+            foreach (var (gram, count) in grams)
+            {
+                var weight = count * (_idf.TryGetValue(gram, out var idf) ? idf : Smoothed(0));
+                weights[gram] = weight;
+                squares += weight * weight;
+            }
+
+            return (weights, Math.Sqrt(squares));
+        }
+
+        /// <summary>Smoothed inverse document frequency at the last refresh: never zero, highest for an n-gram no row had.</summary>
+        private double Smoothed(int frequency) => Math.Log((1.0 + _takenAt) / (1.0 + frequency)) + 1;
 
         private void Tally(Dictionary<string, int> grams, int delta)
         {

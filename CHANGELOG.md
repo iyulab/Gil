@@ -10,7 +10,8 @@ with what to do.
 - **`LexicalMemory`**, memory that needs no model: nearest neighbour over character n-gram TF-IDF (2- and
   3-grams by default), so it works in any script without a tokenizer and a lookup costs no call. Fill it from the
   feedback history with `MemoryReplay`. Its similarities are on their own scale, so choose the task's
-  `MemoryThreshold` for it rather than reusing an embedding memory's.
+  `MemoryThreshold` for it rather than reusing an embedding memory's. Weights are taken afresh as the memory grows by
+  a tenth, so a similarity changes in steps rather than with every answer remembered.
 - **`new Resolver(memory, sink)`**, a resolver without models: memory answers what it can and every other request
   abstains (`abstain`, empty path, null confidence, the miss in `Recall`) without a call. The task's tree,
   thresholds, contract and language are not used — a bare root will do. Memory learns from feedback only through a

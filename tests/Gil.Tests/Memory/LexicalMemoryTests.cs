@@ -74,6 +74,26 @@ public sealed class LexicalMemoryTests
     }
 
     [Fact]
+    public async Task Weights_are_taken_afresh_in_steps_once_the_memory_has_grown_by_a_tenth()
+    {
+        var memory = new LexicalMemory();
+        for (var i = 0; i < 20; i++)
+        {
+            await memory.RememberAsync("task", $"r{i}", $"row{i:D2} common", $"a{i}", $"r{i}", Ct);
+        }
+
+        var (taken, _) = await memory.LookupAsync("task", "common", "q1", Ct);
+        await memory.RememberAsync("task", "r20", "row20 common", "a20", "r20", Ct);
+        var (within, _) = await memory.LookupAsync("task", "common", "q2", Ct);
+        await memory.RememberAsync("task", "r21", "row21 common", "a21", "r21", Ct);
+        var (refreshed, _) = await memory.LookupAsync("task", "common", "q3", Ct);
+
+        within!.Similarity.Should().Be(taken!.Similarity); // 21 rows: not yet a tenth more than 20
+        refreshed!.Similarity.Should().BeLessThan(taken.Similarity); // 22 rows: a word every row shares counts for less
+        (taken.Source, within.Source, refreshed.Source).Should().Be(("r0", "r0", "r0"));
+    }
+
+    [Fact]
     public async Task Ties_go_to_the_row_remembered_first_and_remembering_a_key_again_replaces_it()
     {
         var memory = new LexicalMemory();
