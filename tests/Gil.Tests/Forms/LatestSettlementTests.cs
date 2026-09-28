@@ -55,6 +55,60 @@ public sealed class LatestSettlementTests
         }
     }
 
+    [Theory]
+    [InlineData(0.95, 10)] // 0.95^k < 1 / (2 − 0.95^20) first holds at k = 10
+    [InlineData(1.0, 20)]  // plain counting: level at 20, and the tie goes to the latest
+    public void A_correction_overtakes_older_practice_after_as_many_settlements_as_the_decay_implies(double decay, int needed)
+    {
+        var memory = new FieldMemory(recencyDecay: decay);
+        var known = new Dictionary<string, string> { ["summary"] = "vpn drops" };
+        for (var i = 0; i < 20; i++)
+        {
+            memory.Put(Ticket, Doc($"old{i:00}", "vpn drops", "facilities", Monday.AddMinutes(i)));
+        }
+
+        for (var k = 1; k <= needed; k++)
+        {
+            memory.Put(Ticket, Doc($"new{k:00}", "vpn drops", "network", Monday.AddDays(1).AddMinutes(k)));
+            var first = memory.Rank(Ticket, "team", known, 1)[0].Value;
+            first.Should().Be(k < needed ? "facilities" : "network", $"after {k} corrections");
+        }
+    }
+
+    [Fact]
+    public void Weighing_by_recency_follows_settlement_times_not_arrival_order()
+    {
+        var documents = Enumerable.Range(0, 12)
+            .Select(i => Doc($"d{i:00}", i % 3 == 0 ? "vpn drops" : "vpn slow", i < 7 ? "facilities" : "network", Monday.AddHours(i)))
+            .ToArray();
+        var known = new Dictionary<string, string> { ["summary"] = "vpn drops" };
+        IReadOnlyList<FieldCandidate>? expected = null;
+        foreach (var order in new[] { documents, [.. documents.Reverse()], [.. documents.OrderBy(d => d.DocumentId.GetHashCode(StringComparison.Ordinal))] })
+        {
+            var memory = new FieldMemory();
+            foreach (var document in order)
+            {
+                memory.Put(Ticket, document);
+            }
+
+            var ranked = memory.Rank(Ticket, "team", known, 3);
+            if (expected is null)
+            {
+                expected = ranked;
+            }
+            else
+            {
+                ranked.Should().Equal(expected);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(1.01)]
+    public void The_decay_is_a_weight_in_the_unit_interval(double decay) =>
+        FluentActions.Invoking(() => new FieldMemory(recencyDecay: decay)).Should().Throw<ArgumentOutOfRangeException>();
+
     [Fact]
     public async Task Documents_of_the_same_case_are_answered_by_the_latest_whatever_the_rebuild_order()
     {

@@ -29,7 +29,7 @@ public sealed class FieldMemoryTests
     [Fact]
     public void A_value_scores_the_sum_over_known_keys_of_its_share_under_each()
     {
-        var memory = new FieldMemory();
+        var memory = new FieldMemory(recencyDecay: 1);
         memory.Put(Ticket, Doc("d1", ("component", "printer"), ("severity", "low"), ("team", "facilities")));
         memory.Put(Ticket, Doc("d2", ("component", "printer"), ("severity", "high"), ("team", "facilities")));
         memory.Put(Ticket, Doc("d3", ("component", "vpn"), ("severity", "high"), ("team", "network")));
@@ -57,7 +57,7 @@ public sealed class FieldMemoryTests
     [Fact]
     public void Without_a_known_key_the_most_frequently_settled_values_stand_in()
     {
-        var memory = new FieldMemory();
+        var memory = new FieldMemory(recencyDecay: 1);
         memory.Put(Ticket, Doc("d1", ("component", "vpn"), ("severity", "high")));
         memory.Put(Ticket, Doc("d2", ("component", "vpn"), ("severity", "medium")));
         memory.Put(Ticket, Doc("d3", ("component", "disk"), ("severity", "medium")));
@@ -72,7 +72,7 @@ public sealed class FieldMemoryTests
     [Fact]
     public void A_field_that_is_not_evidence_never_becomes_a_key()
     {
-        var memory = new FieldMemory();
+        var memory = new FieldMemory(recencyDecay: 1);
         memory.Put(Ticket, Doc("d1", ("reporter", "Kim"), ("severity", "high")));
         memory.Put(Ticket, Doc("d2", ("reporter", "Lee"), ("severity", "low")));
         memory.Put(Ticket, Doc("d3", ("reporter", "Lee"), ("severity", "low")));
@@ -94,7 +94,7 @@ public sealed class FieldMemoryTests
                 new FieldDefinition("team", FieldRole.Judged) { DependsOn = ["component"] },
             ],
             PromptLanguage.English);
-        var memory = new FieldMemory();
+        var memory = new FieldMemory(recencyDecay: 1);
         memory.Put(form, Doc("d1", ("component", "vpn"), ("summary", "slow"), ("team", "network")));
         memory.Put(form, Doc("d2", ("component", "disk"), ("summary", "slow"), ("team", "storage")));
         memory.Put(form, Doc("d3", ("component", "disk"), ("summary", "full"), ("team", "storage")));
@@ -108,7 +108,7 @@ public sealed class FieldMemoryTests
     [Fact]
     public void Long_free_text_values_are_not_keys()
     {
-        var memory = new FieldMemory(maxKeyLength: 10);
+        var memory = new FieldMemory(maxKeyLength: 10, recencyDecay: 1);
         memory.Put(Ticket, Doc("d1", ("summary", "the screen goes dark after lunch"), ("team", "facilities")));
         memory.Put(Ticket, Doc("d2", ("summary", "no signal"), ("team", "network")));
         memory.Put(Ticket, Doc("d3", ("summary", "no signal"), ("team", "network")));

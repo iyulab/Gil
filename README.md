@@ -311,9 +311,10 @@ Save the snapshot the way you save documents. At startup, or when documents chan
 can be combined without counting anything twice.
 
 Every `SettledDocument` carries `SettledAt`, when it was last settled — a file's last write time serves. Where
-documents disagree, the later settlement wins: values settled equally often rank by their latest settlement, and
-documents whose evidence reads the same are one case that a similar-document lookup answers with its latest
-settlement. The result is the same whatever order documents arrive in. When reopening a saved document, pass its time
+documents disagree, the later settlement wins: `FieldMemory` weighs each settlement by how many came after it under
+the same key (`recencyDecay`, 0.95 by default — a correction overtakes an older practice without first outnumbering
+it), ties go to the latest settlement, and documents whose evidence reads the same are one case that a
+similar-document lookup answers with its latest settlement. The result is the same whatever order documents arrive in. When reopening a saved document, pass its time
 and put its judged values back with `Settlement.Restore`, which records no acceptance or correction and leaves the
 time as it was; only accepting or correcting a field moves it on:
 

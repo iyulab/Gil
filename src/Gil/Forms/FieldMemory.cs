@@ -5,15 +5,16 @@ namespace Gil.Forms;
 /// <summary>
 /// Suggests a judged field's value from how often each value was settled alongside the values the document's other fields
 /// have — no model, no call, energy 0. Each other field's value is a key; a value's score is the sum over the document's
-/// keys of the share of documents with that key that settled it. When no key has been seen, the field's most frequently
+/// keys of its share of the settlements made under that key. When no key has been seen, the field's most frequently
 /// settled values stand in.
 /// </summary>
 /// <remarks>
 /// A document contributes as a whole: <see cref="Put"/> replaces whatever it contributed before with what its current
 /// values imply, so settling fields one by one and rebuilding from the saved documents reach the same state, in any
-/// order and however often either is done. Where values are settled equally often, the one settled most recently comes
-/// first, so a correction outranks the practice it corrects as soon as it has caught up with it — the documents'
-/// settlement times decide that, not the order they arrived in. Every other field of the document is a key while learning; only the fields
+/// order and however often either is done. Recent settlements weigh more: under each key, a settlement counts
+/// <c>recencyDecay</c> to the power of the number of settlements made under the same key after it, so a correction
+/// overtakes the practice it corrects without first having to outnumber it. Ties go to the value settled most recently.
+/// Both follow the documents' settlement times, not the order they arrived in. Every other field of the document is a key while learning; only the fields
 /// known so far are keys while suggesting. Keys are compared after NFKC, lower-casing and collapsing whitespace, and
 /// values longer than <c>maxKeyLength</c> are not keys — free text rarely recurs. Not thread-safe; one instance serves
 /// one caller at a time.
@@ -21,13 +22,22 @@ namespace Gil.Forms;
 public sealed class FieldMemory
 {
     private readonly int _maxKeyLength;
+    private readonly double _recencyDecay;
     private readonly Dictionary<string, FormIndex> _forms = new(StringComparer.Ordinal);
 
     /// <param name="maxKeyLength">The longest normalised value that is used as a key.</param>
-    public FieldMemory(int maxKeyLength = 60)
+    /// <param name="recencyDecay">
+    /// How much a settlement weighs for each later settlement under the same key, in (0, 1]; 1 counts every settlement
+    /// alike. The default, 0.95, was chosen by replaying a public stream of about 50,000 settled fields in the order
+    /// they were settled: it had fewer wrong first suggestions than plain counting, while 0.9 lost the gain by
+    /// forgetting settled practice too fast.
+    /// </param>
+    public FieldMemory(int maxKeyLength = 60, double recencyDecay = 0.95)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxKeyLength, 1);
-        _maxKeyLength = maxKeyLength;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(recencyDecay, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(recencyDecay, 1);
+        (_maxKeyLength, _recencyDecay) = (maxKeyLength, recencyDecay);
     }
 
     /// <summary>How many documents with at least one settled judged field the form's memory holds.</summary>
@@ -49,8 +59,9 @@ public sealed class FieldMemory
                 continue;
             }
 
-            tallies.Add(new Tally(field.Name, null, value, document.SettledAt));
-            tallies.AddRange(Keys(form, field, document.Values).Select(key => new Tally(field.Name, key, value, document.SettledAt)));
+            var settlement = new Settled(value, document.SettledAt, document.DocumentId);
+            tallies.Add(new Tally(field.Name, null, settlement));
+            tallies.AddRange(Keys(form, field, document.Values).Select(key => new Tally(field.Name, key, settlement)));
         }
 
         if (tallies.Count > 0)
@@ -140,7 +151,7 @@ public sealed class FieldMemory
     {
         if (!_forms.TryGetValue(form, out var index))
         {
-            _forms[form] = index = new FormIndex();
+            _forms[form] = index = new FormIndex(_recencyDecay);
         }
 
         return index;
@@ -152,10 +163,13 @@ public sealed class FieldMemory
     /// <summary>A field's counts under one key, or overall when the key is null.</summary>
     private readonly record struct Slot(string Field, Key? Key);
 
-    /// <summary>One increment a document made: a value settled for a field, under a key or overall, at the document's settlement time.</summary>
-    private readonly record struct Tally(string Field, Key? Key, string Value, DateTimeOffset SettledAt);
+    /// <summary>A value a document settled, and when; the time and then the document id order settlements.</summary>
+    private sealed record Settled(string Value, DateTimeOffset At, string DocumentId);
 
-    private sealed class FormIndex
+    /// <summary>One settlement a document made for a field, under a key or overall.</summary>
+    private readonly record struct Tally(string Field, Key? Key, Settled Settlement);
+
+    private sealed class FormIndex(double recencyDecay)
     {
         private readonly Dictionary<string, List<Tally>> _documents = new(StringComparer.Ordinal);
 
@@ -171,10 +185,10 @@ public sealed class FieldMemory
                 var slot = new Slot(tally.Field, tally.Key);
                 if (!Values.TryGetValue(slot, out var counts))
                 {
-                    Values[slot] = counts = new Counts();
+                    Values[slot] = counts = new Counts(recencyDecay);
                 }
 
-                counts.Add(tally.Value, tally.SettledAt);
+                counts.Add(tally.Settlement);
             }
         }
 
@@ -189,7 +203,7 @@ public sealed class FieldMemory
             {
                 var slot = new Slot(tally.Field, tally.Key);
                 var counts = Values[slot];
-                counts.Subtract(tally.Value, tally.SettledAt);
+                counts.Subtract(tally.Settlement);
                 if (counts.Total == 0)
                 {
                     Values.Remove(slot);
@@ -198,46 +212,50 @@ public sealed class FieldMemory
         }
     }
 
-    /// <summary>How often, and when, each value was settled.</summary>
-    private sealed class Counts
+    /// <summary>The settlements under one key (or overall), weighed by how many came after each.</summary>
+    private sealed class Counts(double recencyDecay)
     {
-        private readonly Dictionary<string, List<DateTimeOffset>> _values = new(StringComparer.Ordinal);
+        private readonly List<Settled> _settled = [];
+        private (string Value, double Share, DateTimeOffset Latest)[]? _shares;
 
-        public int Total { get; private set; }
+        public int Total => _settled.Count;
 
-        public void Add(string value, DateTimeOffset settledAt)
+        public void Add(Settled settled)
         {
-            if (!_values.TryGetValue(value, out var times))
-            {
-                _values[value] = times = [];
-            }
-
-            times.Add(settledAt);
-            Total++;
+            _settled.Add(settled);
+            _shares = null;
         }
 
-        public void Subtract(string value, DateTimeOffset settledAt)
+        public void Subtract(Settled settled)
         {
-            var times = _values[value];
-            times.Remove(settledAt);
-            if (times.Count == 0)
-            {
-                _values.Remove(value);
-            }
-
-            Total--;
+            _settled.Remove(settled);
+            _shares = null;
         }
 
         /// <summary>
-        /// Each value's share of the total and when it was last settled, most frequent first; ties to the one settled most
-        /// recently, then to the ordinally smaller value.
+        /// Each value's share of the weighed total and when it was last settled, largest share first; ties to the one
+        /// settled most recently, then to the ordinally smaller value. Weighed afresh after a change, since a settlement
+        /// that arrives late may belong anywhere in the order.
         /// </summary>
-        public IEnumerable<(string Value, double Share, DateTimeOffset Latest)> Shares() =>
-            _values
-                .Select(v => (Value: v.Key, v.Value.Count, Latest: v.Value.Max()))
-                .OrderByDescending(v => v.Count)
-                .ThenByDescending(v => v.Latest)
-                .ThenBy(v => v.Value, StringComparer.Ordinal)
-                .Select(v => (v.Value, (double)v.Count / Total, v.Latest));
+        public IEnumerable<(string Value, double Share, DateTimeOffset Latest)> Shares() => _shares ??= Weigh();
+
+        private (string Value, double Share, DateTimeOffset Latest)[] Weigh()
+        {
+            var weights = new Dictionary<string, (double Weight, DateTimeOffset Latest)>(StringComparer.Ordinal);
+            var (weight, total) = (1.0, 0.0);
+            foreach (var settled in _settled.OrderByDescending(s => s.At).ThenByDescending(s => s.DocumentId, StringComparer.Ordinal))
+            {
+                var (sum, latest) = weights.GetValueOrDefault(settled.Value, (0, settled.At));
+                weights[settled.Value] = (sum + weight, latest); // newest first, so the first time seen is the latest
+                total += weight;
+                weight *= recencyDecay;
+            }
+
+            return [.. weights
+                .Select(w => (Value: w.Key, Share: w.Value.Weight / total, w.Value.Latest))
+                .OrderByDescending(w => w.Share)
+                .ThenByDescending(w => w.Latest)
+                .ThenBy(w => w.Value, StringComparer.Ordinal)];
+        }
     }
 }

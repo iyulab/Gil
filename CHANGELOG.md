@@ -18,7 +18,9 @@ with what to do.
 - **`FieldMemory`** suggests a judged field's value from how often each value was settled alongside the values the
   document's other fields have, with no model and no call. A document contributes as a whole and putting it again
   replaces its contribution, so settling field by field and rebuilding from saved documents reach the same state in
-  any order. Values settled equally often rank by their latest settlement.
+  any order. Recent settlements weigh more (`recencyDecay`, 0.95 by default: a settlement counts 0.95 to the power of
+  the number of later settlements under the same key), so a correction overtakes an older practice without first
+  outnumbering it; ties go to the latest settlement. Pass `recencyDecay: 1` to count every settlement alike.
 - **`SettledDocument.SettledAt`** — when a document was last settled. Where documents disagree the later settlement
   wins, so memory is the same whatever order documents arrive in, including a partial rebuild after live settling.
   Documents whose evidence for a field reads the same are one case, and a similar-document lookup answers with the
