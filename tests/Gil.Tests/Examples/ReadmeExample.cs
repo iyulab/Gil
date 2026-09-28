@@ -96,7 +96,7 @@ internal static class ReadmeExample
             new FieldDefinition("reporter", FieldRole.Observed) { UseAsEvidence = false },
             new FieldDefinition("component", FieldRole.Observed),
             new FieldDefinition("summary", FieldRole.Observed),
-            new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.5 },
+            new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.5, KeyThreshold = 0.6 },
             new FieldDefinition("severity", FieldRole.Judged) { Candidates = ["low", "medium", "high"], Policy = FieldPolicy.ConfirmRequired },
         ], PromptLanguage.English);
 
@@ -109,9 +109,16 @@ internal static class ReadmeExample
         var updated = await session.SettleAsync("team", Settlement.Accept("network"));
         var document = session.Snapshot();
 
+        Dictionary<string, string> valuesOnScreen = new() { ["summary"] = "VPN drops every ten minutes" };
+        var savedDocument = document;
+        var onScreen = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen);
+        // … on save:
+        await forms.RebuildAsync(form, [savedDocument]);
+
         var reopened = forms.Open(form, saved[0].DocumentId, saved[0].SettledAt);
         await reopened.SettleAsync("team", Settlement.Restore(saved[0].Values["team"]));
 
-        var choice = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+        var similar = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+        var key = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
     }
 }

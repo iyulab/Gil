@@ -80,7 +80,7 @@ public sealed class FieldMemoryTests
         // With the reporter as a key, "Kim" would point to high; without it only the overall frequency is left.
         var ranked = memory.Rank(Ticket, "severity", Known(("reporter", "Kim")), 1);
 
-        ranked.Single().Should().Be(new FieldCandidate("low", 2.0 / 3, FieldSource.SettledFieldMemory, null));
+        ranked.Single().Should().Be(new FieldCandidate("low", 2.0 / 3, FieldSource.SettledFieldMemory, null, Trusted: false));
     }
 
     [Fact]
@@ -114,9 +114,9 @@ public sealed class FieldMemoryTests
         memory.Put(Ticket, Doc("d3", ("summary", "no signal"), ("team", "network")));
 
         memory.Rank(Ticket, "team", Known(("summary", "the screen goes dark after lunch")), 1)
-            .Single().Should().Be(new FieldCandidate("network", 2.0 / 3, FieldSource.SettledFieldMemory, null));
+            .Single().Should().Be(new FieldCandidate("network", 2.0 / 3, FieldSource.SettledFieldMemory, null, Trusted: false));
         memory.Rank(Ticket, "team", Known(("summary", "No  Signal")), 1)
-            .Single().Should().Be(new FieldCandidate("network", 1.0, FieldSource.SettledFieldMemory, "summary: no signal"));
+            .Single().Should().Be(new FieldCandidate("network", 1.0, FieldSource.SettledFieldMemory, "summary: no signal", Trusted: false));
     }
 
     [Fact]

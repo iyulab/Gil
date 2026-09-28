@@ -15,8 +15,8 @@ public sealed class FormSessionTests
             new FieldDefinition("reporter", FieldRole.Observed) { UseAsEvidence = false },
             new FieldDefinition("component", FieldRole.Observed),
             new FieldDefinition("summary", FieldRole.Observed),
-            new FieldDefinition("severity", FieldRole.Judged) { DependsOn = ["component"] },
-            new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.3 },
+            new FieldDefinition("severity", FieldRole.Judged) { DependsOn = ["component"], KeyThreshold = 0.5 },
+            new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.3, KeyThreshold = 0.5 },
             new FieldDefinition("assessment", FieldRole.Judged) { Policy = FieldPolicy.Off },
         ],
         PromptLanguage.English);
@@ -148,7 +148,7 @@ public sealed class FormSessionTests
     }
 
     [Fact]
-    public async Task A_similar_document_outranks_a_guess_without_evidence_but_not_a_value_backed_by_a_key()
+    public async Task A_similar_document_outranks_a_guess_but_not_a_value_under_a_strong_enough_key()
     {
         var sink = new ListSink();
         var resolver = new FormResolver(new FieldMemory(), new LexicalMemory(), sink: sink);
@@ -163,7 +163,7 @@ public sealed class FormSessionTests
             ("facilities", FieldSource.SimilarDocument, "d2"),
             ("network", FieldSource.SettledFieldMemory, null));
 
-        // Once a key matches, its values lead.
+        // Once a key strong enough matches, its values lead.
         var keyed = await session.ObserveAsync("component", "vpn", Ct);
         keyed.Single(s => s.Field == "team").Candidates[0].Should().Be(new FieldCandidate("network", 1.0, FieldSource.SettledFieldMemory, "component: vpn"));
 

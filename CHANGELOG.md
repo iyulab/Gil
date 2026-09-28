@@ -3,7 +3,32 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
-## Unreleased
+## 0.5.0
+
+### Breaking
+
+- **Values under a key answer only above `FieldDefinition.KeyThreshold`.** Before, a value settled alongside any known
+  value led a field's suggestion, so a key that rarely decides the field — a choice among a handful of values that every
+  document has — outranked a similar document, and the field's suggestions were mostly wrong. A key's strength is its
+  weighted count for the value over the key's weighted total plus one: purity, discounted for few settlements. Without
+  a `KeyThreshold` those values are now guesses. What to do: choose one with `ThresholdSelection.SelectKeyThreshold`,
+  like `MemoryThreshold`; a null choice means the keys should not answer the field. Where neither a document memory
+  nor a model is configured, candidates keep their order and only `Trusted`/`Answered` change.
+- **`FieldCandidate` has a fifth parameter, `Trusted`** (default `true`). Code that deconstructs it positionally needs
+  the extra element; `IFieldModel` implementations can keep constructing it with four.
+- **A suggestion whose first candidate is a guess is traced as an abstention** (`Mode = "abstain"`, no output). Before,
+  it was traced with the guessing layer's mode and value.
+
+### Added
+
+- **`FieldSuggestion.Answered`** — whether the first candidate is an answer rather than a guess.
+- **Guesses after the answers**: the nearest similar document below `MemoryThreshold`, then values under a key below
+  `KeyThreshold`, then the field's most frequent values. The nearest document was dropped before.
+- **`ThresholdSelection.SelectKeyThreshold(fieldMemory, form, field, documents, targetPrecision, minimumAnswered)`**
+  replays settled documents in the order they were settled and returns the lowest key strength that meets the target.
+- **`FormResolver.SuggestAsync(form, documentId, values)`** suggests every open judged field from the values given and
+  writes nothing to memory — for applications where saving is settling. The saved version of the same document is not
+  evidence for itself. `FieldMemory.Rank` takes the document to leave out as `excluding`.
 
 ### Fixed
 

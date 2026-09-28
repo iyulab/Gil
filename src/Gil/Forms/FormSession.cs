@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace Gil.Forms;
 
 /// <summary>
@@ -129,88 +127,6 @@ public sealed class FormSession
         && !_values.ContainsKey(field.Name)
         && !_rejected.Contains(field.Name);
 
-    private async Task<FieldSuggestion> SuggestAsync(FieldDefinition field, CancellationToken cancellationToken)
-    {
-        var started = Stopwatch.GetTimestamp();
-        var traceId = Guid.NewGuid().ToString("N");
-        var task = FormResolver.TaskName(Form, field.Name);
-        var evidence = FormResolver.EvidenceValues(Form, field.Name, _values);
-        var lines = FormResolver.Lines(evidence);
-        _resolver.Sink?.OpenTrace(traceId, task, lines); // opened first: a model resolving under the same id closes it
-
-        var remembered = _resolver.FieldMemory.Rank(Form, field.Name, _values, _resolver.CandidateCount);
-        var keyed = remembered.Where(c => c.Evidence is not null).ToList();
-        var (similar, recall, energy) = await SimilarAsync(field, task, lines, traceId, cancellationToken).ConfigureAwait(false);
-
-        // A model only where neither memory had evidence: a value backed by what the document says beats a model's guess.
-        FieldModelResult? modelled = null;
-        if (_resolver.Model is IFieldModel model && keyed.Count == 0 && similar.Count == 0)
-        {
-            modelled = await model.SuggestAsync(Form, field.Name, evidence, traceId, cancellationToken).ConfigureAwait(false);
-            energy += modelled.Energy;
-        }
-
-        // Values backed by a known key first, then a similar document, then the model; the field's overall frequency
-        // comes last, being a guess without evidence.
-        var candidates = keyed
-            .Concat(similar)
-            .Concat(modelled?.Candidates ?? [])
-            .Concat(remembered.Where(c => c.Evidence is null))
-            .DistinctBy(c => c.Value, StringComparer.Ordinal)
-            .Take(_resolver.CandidateCount)
-            .ToList();
-        var source = candidates.Count > 0 ? candidates[0].Source : FieldSource.None;
-        var confidence = source == FieldSource.Model ? modelled?.Confidence : null;
-
-        // A model that resolved under this id through the same sink has closed the trace with its own outcome.
-        if (_resolver.Sink is ITelemetrySink sink && (modelled is null || sink.FindTrace(traceId) is null))
-        {
-            sink.CloseTrace(traceId, new TraceOutcome
-            {
-                Mode = Mode(source),
-                Output = candidates.Count > 0 ? candidates[0].Value : null,
-                Confidence = confidence,
-                Energy = energy,
-                Recall = recall,
-            });
-        }
-
-        return new FieldSuggestion(field.Name, candidates, source, field.Policy, confidence, Stopwatch.GetElapsedTime(started), energy, traceId);
-    }
-
-    /// <summary>The nearest similar settled document's value when it is similar enough, and what the lookup found.</summary>
-    private async Task<(IReadOnlyList<FieldCandidate> Candidates, Recall? Recall, double Energy)> SimilarAsync(
-        FieldDefinition field, string task, string evidence, string traceId, CancellationToken cancellationToken)
-    {
-        if (_resolver.DocumentMemory is not IMemory memory || field.MemoryThreshold is not double threshold || evidence.Length == 0)
-        {
-            return ([], null, 0);
-        }
-
-        try
-        {
-            var (match, energy) = await memory.LookupAsync(task, evidence, traceId, cancellationToken).ConfigureAwait(false);
-            // The document itself is never its own evidence.
-            if (match is null || match.Source == DocumentId)
-            {
-                return ([], null, energy);
-            }
-
-            var hit = match.Similarity >= threshold;
-            var recall = new Recall(match.Source, match.Similarity, threshold, hit);
-            return (hit ? [new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source)] : [], recall, energy);
-        }
-        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-        {
-            return ([], Recall.Failed(threshold, error), 0);
-        }
-    }
-
-    private static string Mode(FieldSource source) => source switch
-    {
-        FieldSource.SettledFieldMemory => "field_memory",
-        FieldSource.SimilarDocument => "memory",
-        FieldSource.Model => "model",
-        _ => "abstain",
-    };
+    private Task<FieldSuggestion> SuggestAsync(FieldDefinition field, CancellationToken cancellationToken) =>
+        _resolver.SuggestFieldAsync(Form, DocumentId, _values, field, cancellationToken);
 }

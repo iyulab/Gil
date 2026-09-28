@@ -1,13 +1,16 @@
+using System.Diagnostics;
 using Gil.Memory;
 
 namespace Gil.Forms;
 
 /// <summary>
 /// Suggests the judged fields of a form, one document at a time. Each field is tried in a fixed order — values settled
-/// alongside the document's other values (<see cref="FieldMemory"/>), then the value of a similar settled document (an
-/// optional <see cref="IMemory"/>), then a model (an optional <see cref="IFieldModel"/>, called only when neither memory
-/// had evidence), then values settled most often overall — and a field no layer can suggest is left to a person.
-/// Without a document memory or a model the order simply has a layer less; every result has the same shape.
+/// alongside the document's other values (<see cref="FieldMemory"/>) under a key strong enough, then the value of a
+/// similar settled document (an optional <see cref="IMemory"/>) close enough, then a model (an optional
+/// <see cref="IFieldModel"/>, called only when neither memory had evidence). A layer answers only above its threshold;
+/// below it, what it found is offered after the answering layers as a guess, followed by the values settled most often
+/// overall, and a field without an answer is left to a person (<see cref="FieldSuggestion.Answered"/>). Without a
+/// document memory or a model the order simply has a layer less; every result has the same shape.
 /// </summary>
 /// <remarks>
 /// Memory is derived from settled documents: a <see cref="FormSession"/> puts its document again after every change, and
@@ -97,6 +100,129 @@ public sealed class FormResolver
 
         return energy;
     }
+
+    /// <summary>
+    /// Suggests every open judged field — without a value and not <see cref="FieldPolicy.Off"/> — from the values given,
+    /// writing nothing to memory. For applications where saving is settling: ask with the values on screen, and put the
+    /// document with <see cref="RebuildAsync"/> once it is saved. The saved version of <paramref name="documentId"/>, if
+    /// memory holds one, is not evidence for itself: its settlements are left out of the field memory, and a similar
+    /// document lookup that finds it counts as a miss.
+    /// </summary>
+    /// <param name="form">The form.</param>
+    /// <param name="documentId">The document asked about; opaque, as in <see cref="Open"/>.</param>
+    /// <param name="values">The document's values as they stand — observed and judged alike.</param>
+    /// <param name="cancellationToken">Cancels the calls made.</param>
+    public async Task<IReadOnlyList<FieldSuggestion>> SuggestAsync(
+        FormDefinition form,
+        string documentId,
+        IReadOnlyDictionary<string, string> values,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(form);
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        ArgumentNullException.ThrowIfNull(values);
+        var suggestions = new List<FieldSuggestion>();
+        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged && f.Policy != FieldPolicy.Off && !values.ContainsKey(f.Name)))
+        {
+            suggestions.Add(await SuggestFieldAsync(form, documentId, values, field, cancellationToken).ConfigureAwait(false));
+        }
+
+        return suggestions;
+    }
+
+    /// <summary>
+    /// One field's suggestion. Layers that answer come first — values under a key strong enough
+    /// (<see cref="FieldDefinition.KeyThreshold"/>), a document similar enough (<see cref="FieldDefinition.MemoryThreshold"/>),
+    /// and a model where neither memory had anything — then guesses: the nearest document below the threshold, values
+    /// under weaker keys, the field's most frequent values.
+    /// </summary>
+    internal async Task<FieldSuggestion> SuggestFieldAsync(
+        FormDefinition form, string documentId, IReadOnlyDictionary<string, string> values, FieldDefinition field, CancellationToken cancellationToken)
+    {
+        var started = Stopwatch.GetTimestamp();
+        var traceId = Guid.NewGuid().ToString("N");
+        var task = TaskName(form, field.Name);
+        var evidence = EvidenceValues(form, field.Name, values);
+        var lines = Lines(evidence);
+        Sink?.OpenTrace(traceId, task, lines); // opened first: a model resolving under the same id closes it
+
+        var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId);
+        var keyed = remembered.Where(c => c.Evidence is not null).ToList();
+        var (similar, recall, energy) = await SimilarAsync(field, documentId, task, lines, traceId, cancellationToken).ConfigureAwait(false);
+
+        // A model only where neither memory had evidence: a value backed by what the document says — even by a key too
+        // weak to answer — beats a model's guess.
+        FieldModelResult? modelled = null;
+        if (Model is IFieldModel model && keyed.Count == 0 && !similar.Any(c => c.Trusted))
+        {
+            modelled = await model.SuggestAsync(form, field.Name, evidence, traceId, cancellationToken).ConfigureAwait(false);
+            energy += modelled.Energy;
+        }
+
+        var candidates = keyed.Where(c => c.Trusted)
+            .Concat(similar.Where(c => c.Trusted))
+            .Concat(modelled?.Candidates ?? [])
+            .Concat(similar.Where(c => !c.Trusted))
+            .Concat(keyed.Where(c => !c.Trusted))
+            .Concat(remembered.Where(c => c.Evidence is null))
+            .DistinctBy(c => c.Value, StringComparer.Ordinal)
+            .Take(CandidateCount)
+            .ToList();
+        var source = candidates.Count > 0 ? candidates[0].Source : FieldSource.None;
+        var answered = candidates.Count > 0 && candidates[0].Trusted;
+        var confidence = source == FieldSource.Model ? modelled?.Confidence : null;
+
+        // A model that resolved under this id through the same sink has closed the trace with its own outcome.
+        if (Sink is ITelemetrySink sink && (modelled is null || sink.FindTrace(traceId) is null))
+        {
+            sink.CloseTrace(traceId, new TraceOutcome
+            {
+                Mode = answered ? Mode(source) : "abstain",
+                Output = answered ? candidates[0].Value : null,
+                Confidence = confidence,
+                Energy = energy,
+                Recall = recall,
+            });
+        }
+
+        return new FieldSuggestion(field.Name, candidates, source, field.Policy, confidence, Stopwatch.GetElapsedTime(started), energy, traceId);
+    }
+
+    /// <summary>The nearest similar settled document's value — trusted when similar enough — and what the lookup found.</summary>
+    private async Task<(IReadOnlyList<FieldCandidate> Candidates, Recall? Recall, double Energy)> SimilarAsync(
+        FieldDefinition field, string documentId, string task, string evidence, string traceId, CancellationToken cancellationToken)
+    {
+        if (DocumentMemory is not IMemory memory || field.MemoryThreshold is not double threshold || evidence.Length == 0)
+        {
+            return ([], null, 0);
+        }
+
+        try
+        {
+            var (match, energy) = await memory.LookupAsync(task, evidence, traceId, cancellationToken).ConfigureAwait(false);
+            // The document itself is never its own evidence.
+            if (match is null || match.Source == documentId)
+            {
+                return ([], null, energy);
+            }
+
+            var hit = match.Similarity >= threshold;
+            var recall = new Recall(match.Source, match.Similarity, threshold, hit);
+            return ([new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)], recall, energy);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            return ([], Recall.Failed(threshold, error), 0);
+        }
+    }
+
+    private static string Mode(FieldSource source) => source switch
+    {
+        FieldSource.SettledFieldMemory => "field_memory",
+        FieldSource.SimilarDocument => "memory",
+        FieldSource.Model => "model",
+        _ => "abstain",
+    };
 
     /// <summary>Replaces the document's contribution to both memories with what its current values imply.</summary>
     internal async Task<double> PutAsync(FormDefinition form, SettledDocument document, string traceId, CancellationToken cancellationToken)

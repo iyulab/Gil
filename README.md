@@ -271,7 +271,7 @@ var form = new FormDefinition("ticket",
     new FieldDefinition("reporter", FieldRole.Observed) { UseAsEvidence = false },
     new FieldDefinition("component", FieldRole.Observed),
     new FieldDefinition("summary", FieldRole.Observed),
-    new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.5 },
+    new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.5, KeyThreshold = 0.6 },
     new FieldDefinition("severity", FieldRole.Judged) { Candidates = ["low", "medium", "high"], Policy = FieldPolicy.ConfirmRequired },
 ], PromptLanguage.English);
 
@@ -295,12 +295,21 @@ var updated = await session.SettleAsync("team", Settlement.Accept("network"));
 var document = session.Snapshot();
 ```
 
-Each field is tried in a fixed order, and `FieldSuggestion.Source` says which layer answered:
-1. Values settled alongside the values the document already has.
-2. The value of a similar settled document, when the field sets `MemoryThreshold` and a document memory is given.
+Each field is tried in a fixed order, and `FieldSuggestion.Source` says which layer the first candidate came from:
+1. Values settled alongside the values the document already has, when the key backing them is strong enough
+   (`KeyThreshold`).
+2. The value of a similar settled document, when the field sets `MemoryThreshold`, a document memory is given, and the
+   document is similar enough.
 3. A model, when one is given (`IFieldModel`; `ResolverFieldModel` puts the resolver above behind it, one task per
-   field). It is asked only when neither memory had evidence, so it never overrides a value the document supports.
-4. The values settled most often for the field.
+   field). It is asked only when neither memory had anything, so it never overrides a value the document supports.
+
+A layer answers only at or above its threshold. What falls short is still offered, after the layers that answered, as
+a guess: the nearest document below `MemoryThreshold`, values under a key below `KeyThreshold`, then the values settled
+most often for the field. `FieldCandidate.Trusted` marks which is which, and `FieldSuggestion.Answered` says whether
+the first candidate is an answer at all — when it is not, leave the field to the person and do not present the guess
+as a suggestion. A key's strength is how pure it is for the value, discounted when it was seen only a few times: a
+choice among a handful of values that every document has rarely decides another field, and without `KeyThreshold` its
+values are guesses, so it never outranks a similar document.
 
 On a machine without a large model, leave the model out: measured on requests a lexical memory did not answer on its
 own, small local models (2B and 4B, quantised) were right less often than that memory's nearest document, and took
@@ -309,6 +318,16 @@ seconds per field on an office laptop.
 When no layer has a candidate, a person decides. Only a model reports `Confidence`: a frequency or a similarity is not
 a probability. Give `ResolverFieldModel` the same sink and name each task `form/field`, and a model's suggestion is
 traced like any resolved request — `FeedbackAsync` on its trace id then reaches the tree.
+
+Where saving a document is what settles it, a draft must not reach memory. Ask with the values on screen instead of
+opening a session, and put the document once it is saved; the saved version of the same document is left out of its
+own evidence:
+
+```csharp
+var onScreen = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen);
+// … on save:
+await forms.RebuildAsync(form, [savedDocument]);
+```
 
 Save the snapshot the way you save documents. At startup, or when documents change elsewhere, pass them to
 `RebuildAsync`. A document's contribution is always what its current values imply, so live settling and rebuilding
@@ -327,11 +346,12 @@ var reopened = forms.Open(form, saved[0].DocumentId, saved[0].SettledAt);
 await reopened.SettleAsync("team", Settlement.Restore(saved[0].Values["team"]));
 ```
 
-The right `MemoryThreshold` moves as memory grows. Choose it again from time to time — for instance when memory has
-grown by a tenth — by replaying the saved documents:
+The right thresholds move as memory grows. Choose them again from time to time — for instance when memory has grown
+by a tenth — by replaying the saved documents. A null choice means that layer should not answer the field on its own:
 
 ```csharp
-var choice = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+var similar = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+var key = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
 ```
 
 The replay looks each document up with all of its other values, while a live session often knows only some of them,

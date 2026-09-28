@@ -9,7 +9,7 @@ namespace Gil.Forms;
 public sealed record ThresholdChoice(double Threshold, double Precision, double AnswerRate, int Answered, int Lookups);
 
 /// <summary>
-/// Chooses <see cref="FieldDefinition.MemoryThreshold"/> by replaying settled documents. The right threshold moves as a
+/// Chooses <see cref="FieldDefinition.MemoryThreshold"/> and <see cref="FieldDefinition.KeyThreshold"/> by replaying settled documents. The right threshold moves as a
 /// memory grows — a small memory's nearest document is rarely close, a large one's often is — so a threshold fixed once
 /// loses answers it could give; choose it again as the memory grows (for instance whenever it has grown by a tenth).
 /// </summary>
@@ -44,13 +44,7 @@ public static class ThresholdSelection
         ArgumentNullException.ThrowIfNull(memory);
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(documents);
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(targetPrecision, 0);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(targetPrecision, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(minimumAnswered, 1);
-        if (form.Field(field).Role != FieldRole.Judged)
-        {
-            throw new ArgumentException($"'{field}' is not a judged field.", nameof(field));
-        }
+        Check(form, field, targetPrecision, minimumAnswered);
 
         var task = FormResolver.TaskName(form, field);
         var traceId = Guid.NewGuid().ToString("N"); // the replay's cost is its own
@@ -90,10 +84,82 @@ public static class ThresholdSelection
             remembered++;
         }
 
-        // Walk thresholds from the highest similarity down; the last one still meeting the target is the lowest.
+        return Lowest(matches, lookups, targetPrecision, minimumAnswered);
+    }
+
+    /// <summary>
+    /// Chooses <see cref="FieldDefinition.KeyThreshold"/> the same way: replays the documents in the order they were
+    /// settled, asking a field memory holding only the documents settled before each for the best-ranked value under the
+    /// document's keys, then putting the document. Returns the lowest strength at which the values asked about reach
+    /// <paramref name="targetPrecision"/> with at least <paramref name="minimumAnswered"/> of them, or null when no
+    /// strength does — the field's keys then should not answer on their own. A document whose keys were never seen
+    /// before is a lookup without an answer.
+    /// </summary>
+    /// <param name="memory">An empty field memory configured as the one in use; the replay fills it. Never the one serving suggestions.</param>
+    /// <param name="form">The form.</param>
+    /// <param name="field">A judged field of the form.</param>
+    /// <param name="documents">Settled documents, in any order.</param>
+    /// <param name="targetPrecision">The share of answers that must match, in (0, 1].</param>
+    /// <param name="minimumAnswered">The fewest answers a precision may rest on; the application's call, as for similarity.</param>
+    public static ThresholdChoice? SelectKeyThreshold(
+        FieldMemory memory,
+        FormDefinition form,
+        string field,
+        IEnumerable<SettledDocument> documents,
+        double targetPrecision,
+        int minimumAnswered)
+    {
+        ArgumentNullException.ThrowIfNull(memory);
+        ArgumentNullException.ThrowIfNull(form);
+        ArgumentNullException.ThrowIfNull(documents);
+        Check(form, field, targetPrecision, minimumAnswered);
+
+        var matches = new List<(double Strength, bool Correct)>();
+        var lookups = 0;
+        var ordered = documents
+            .OrderBy(d => d.SettledAt)
+            .ThenBy(d => d.DocumentId, StringComparer.Ordinal); // the order the field memory weighs settlements in
+        foreach (var document in ordered)
+        {
+            if (!document.Values.TryGetValue(field, out var settled))
+            {
+                continue;
+            }
+
+            if (memory.Count(form.Name) > 0)
+            {
+                lookups++;
+                if (memory.First(form, field, document.Values, settled) is { } first)
+                {
+                    matches.Add((first.Strength, first.Matches));
+                }
+            }
+
+            memory.Put(form, document);
+        }
+
+        return Lowest(matches, lookups, targetPrecision, minimumAnswered);
+    }
+
+    private static void Check(FormDefinition form, string field, double targetPrecision, int minimumAnswered)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(targetPrecision, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(targetPrecision, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(minimumAnswered, 1);
+        if (form.Field(field).Role != FieldRole.Judged)
+        {
+            throw new ArgumentException($"'{field}' is not a judged field.", nameof(field));
+        }
+    }
+
+    /// <summary>
+    /// Walks thresholds from the highest score down; the last one whose answers still meet the target is the lowest.
+    /// </summary>
+    private static ThresholdChoice? Lowest(List<(double Score, bool Correct)> matches, int lookups, double targetPrecision, int minimumAnswered)
+    {
         ThresholdChoice? choice = null;
         var (answered, correct) = (0, 0);
-        foreach (var group in matches.GroupBy(m => m.Similarity).OrderByDescending(g => g.Key))
+        foreach (var group in matches.GroupBy(m => m.Score).OrderByDescending(g => g.Key))
         {
             answered += group.Count();
             correct += group.Count(m => m.Correct);

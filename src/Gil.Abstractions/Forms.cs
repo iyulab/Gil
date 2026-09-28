@@ -43,6 +43,17 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     public double? MemoryThreshold { get; init; }
 
     /// <summary>
+    /// Strength at or above which values settled alongside the document's known values are suggested as backed by them.
+    /// A value's strength under a key is its weighted count there divided by the key's weighted total plus one — how pure
+    /// the key is for it, discounted when the key was seen only a few times, so a key settled once is at most 0.5. The
+    /// best-ranked value's strongest key decides for the whole layer. Null offers those values only as guesses, after
+    /// every layer that answers: a key that rarely decides the field, such as a choice among a handful of values that
+    /// every document has, must not outrank a similar document. Choose it by replaying settled documents
+    /// (<c>ThresholdSelection.SelectKeyThreshold</c>).
+    /// </summary>
+    public double? KeyThreshold { get; init; }
+
+    /// <summary>
     /// The fields whose values this field's suggestions may rest on. A hint that removes noisy evidence; null means every
     /// other field that is evidence (see <see cref="UseAsEvidence"/>). Which fields actually matter is learned from settled
     /// documents either way.
@@ -168,7 +179,13 @@ public enum FieldSource
 /// What the value rests on, for display: the other field value that backs it most (<c>field: value</c>), or the id of the
 /// similar document; null when there is nothing specific.
 /// </param>
-public sealed record FieldCandidate(string Value, double Score, FieldSource Source, string? Evidence);
+/// <param name="Trusted">
+/// Whether the layer answered: its threshold was met (<see cref="FieldDefinition.KeyThreshold"/>,
+/// <see cref="FieldDefinition.MemoryThreshold"/>) or it is a model's choice. False marks a guess — the nearest document
+/// below the similarity threshold, values under a key too weak to decide, the field's most frequent values — which an
+/// application may still list but should not present as a suggestion.
+/// </param>
+public sealed record FieldCandidate(string Value, double Score, FieldSource Source, string? Evidence, bool Trusted = true);
 
 /// <summary>The suggestion for one judged field.</summary>
 /// <param name="Field">The field.</param>
@@ -187,7 +204,14 @@ public sealed record FieldSuggestion(
     double? Confidence,
     TimeSpan Elapsed,
     double Energy,
-    string TraceId);
+    string TraceId)
+{
+    /// <summary>
+    /// Whether a layer answered: the first candidate is trusted. False when there are only guesses or no candidates — the
+    /// field is left to a person, and its trace records an abstention.
+    /// </summary>
+    public bool Answered => Candidates.Count > 0 && Candidates[0].Trusted;
+}
 
 /// <summary>What a model suggested for one field.</summary>
 /// <param name="Candidates">Best first; empty when the model abstained.</param>
