@@ -10,6 +10,15 @@ with what to do.
 - **`LexicalMemory.Nearest(task, state, count)`** lists the most similar remembered requests, most similar first
   (ties keep the order they were remembered in); the first is the match `LookupAsync` returns. Use it to offer several
   remembered answers as candidates rather than only the nearest one.
+- **Form definitions** (`FormDefinition`, `FieldDefinition`, `FieldRole`, `FieldPolicy`) describe a form whose judged
+  fields are suggested and settled one by one, with `SettledDocument`, `FieldCandidate`, `FieldSource` and
+  `Settlement` for the values around them. A field can be kept out of every other field's evidence
+  (`UseAsEvidence = false`) — for fields that identify a person, so that "this person, therefore this outcome" never
+  hardens into memory. Declarations that contradict each other are refused when the form is defined.
+- **`FieldMemory`** suggests a judged field's value from how often each value was settled alongside the values the
+  document's other fields have, with no model and no call. A document contributes as a whole and putting it again
+  replaces its contribution, so settling field by field and rebuilding from saved documents reach the same state in
+  any order.
 
 ## 0.3.0
 

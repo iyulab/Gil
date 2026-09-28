@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Gil.Memory;
 
 /// <summary>
@@ -91,37 +89,14 @@ public sealed class LexicalMemory : IMemory
     /// </summary>
     private Dictionary<string, int> Grams(string text)
     {
-        var normal = new StringBuilder(" ");
-        var space = true;
-        foreach (var c in text.Normalize(NormalizationForm.FormKC).ToLowerInvariant())
-        {
-            if (char.IsWhiteSpace(c))
-            {
-                if (!space)
-                {
-                    normal.Append(' ');
-                }
-
-                space = true;
-                continue;
-            }
-
-            normal.Append(c);
-            space = false;
-        }
-
-        if (!space)
-        {
-            normal.Append(' ');
-        }
-
-        var padded = normal.ToString();
+        var normal = TextNormal.Collapse(text);
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        if (padded.Trim().Length == 0)
+        if (normal.Length == 0)
         {
             return counts;
         }
 
+        var padded = $" {normal} ";
         if (padded.Length < _minGram)
         {
             counts[padded] = 1;
