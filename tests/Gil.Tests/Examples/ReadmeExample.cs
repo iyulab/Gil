@@ -1,8 +1,9 @@
-// The code of README.md's Usage section, compiled here so that the README breaks together with the API.
+// The code of README.md's code blocks, compiled here so that the README breaks together with the API.
 // ReadmeTests checks that every line of the README's code blocks appears here, in the same order.
 using System.Text.Json.Nodes;
 using Gil;
 using Gil.Fallback;
+using Gil.Forms;
 using Gil.Habits;
 using Gil.Judge;
 using Gil.Llm;
@@ -88,5 +89,26 @@ internal static class ReadmeExample
         var fitted = EnergyModel.Fit(store.ServerTimeSamples("my-model"));
 
         var stats = store.Stats(task.Name, window: 100, pricing: fitted, tree: tree);
+
+        SettledDocument[] saved = [];   // the documents the application has saved
+        var form = new FormDefinition("ticket",
+        [
+            new FieldDefinition("reporter", FieldRole.Observed) { UseAsEvidence = false },
+            new FieldDefinition("component", FieldRole.Observed),
+            new FieldDefinition("summary", FieldRole.Observed),
+            new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.5 },
+            new FieldDefinition("severity", FieldRole.Judged) { Candidates = ["low", "medium", "high"], Policy = FieldPolicy.ConfirmRequired },
+        ], PromptLanguage.English);
+
+        var forms = new FormResolver(new FieldMemory(), new LexicalMemory());
+        await forms.RebuildAsync(form, saved);
+
+        var session = forms.Open(form, "tickets/0412");
+        await session.ObserveAsync("reporter", "Kim");
+        var suggestions = await session.ObserveAsync("summary", "VPN drops every ten minutes");
+        var updated = await session.SettleAsync("team", Settlement.Accept("network"));
+        var document = session.Snapshot();
+
+        var choice = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
     }
 }

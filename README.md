@@ -37,7 +37,7 @@ between models (a router does that), or for a task that never gets feedback (mem
 | Project | Contents |
 |---|---|
 | `Gil.Abstractions` | Records and ports: the decision tree, model calls, traversal steps, telemetry sink, habit statistics |
-| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling, the resolver (memory → tree → narrowed fallback → full fallback, or memory alone without models), embedding memory (over any Microsoft.Extensions.AI embedding generator too, through `EmbeddingGeneratorModel`), lexical memory (character n-grams, no model), habit statistics (visits per node, and per-judgment credit and blame from feedback, kept as raw counts), an optional exploration rate that cross-checks accepted answers against the full fallback, optional shadows (answers already known at a node but not yet habits, shown beside its habits so that picking one defers to the fallback instead of letting a similar sibling absorb the request), and promotion proposals (a confirmed fallback answer that keeps recurring at a node, proposed as a habit when it saves more than the judgment it adds, with the tree before and after for review), and deactivation proposals (unreliable, disputed or stale habits, each for its heaviest reason, with age counted in requests), and differentiation signals (a node at its label capacity, and answers repeating at a node with children, told apart as missed, belonging under one child, or needing a new category) |
+| `Gil` | The runtime. Currently: the SQLite telemetry store, the tree YAML reader/writer, calibrated call pricing, the single-token judge, the greedy traverser, output contracts, the fallback generator, slot filling, the resolver (memory → tree → narrowed fallback → full fallback, or memory alone without models), embedding memory (over any Microsoft.Extensions.AI embedding generator too, through `EmbeddingGeneratorModel`), lexical memory (character n-grams, no model), a form resolver that suggests a document's judged fields one at a time from values settled alongside its other values and from similar settled documents (no model), with threshold selection by replay, habit statistics (visits per node, and per-judgment credit and blame from feedback, kept as raw counts), an optional exploration rate that cross-checks accepted answers against the full fallback, optional shadows (answers already known at a node but not yet habits, shown beside its habits so that picking one defers to the fallback instead of letting a similar sibling absorb the request), and promotion proposals (a confirmed fallback answer that keeps recurring at a node, proposed as a habit when it saves more than the judgment it adds, with the tree before and after for review), and deactivation proposals (unreliable, disputed or stale habits, each for its heaviest reason, with age counted in requests), and differentiation signals (a node at its label capacity, and answers repeating at a node with children, told apart as missed, belonging under one child, or needing a new category) |
 | `Gil.IronHive` | Chat and embedding models through any IronHive generator, with ready-made ones for OpenAI-compatible servers (retry rules for busy shared servers, the response kept as received). Optional: implement `IChatModel` and `IEmbeddingModel` yourself and `Gil` needs nothing else |
 | `Gil.Tests` | Unit tests and the compatibility fixture writer |
 
@@ -257,6 +257,66 @@ it per model call with its role, node and tokens, and the metrics `gil.resolutio
 outcome), `gil.resolution.energy`, `gil.resolution.duration` and `gil.call.energy`. With OpenTelemetry, add
 `AddSource(GilDiagnostics.Name)` and `AddMeter(GilDiagnostics.Name)`. Provider spans and token metrics (`gen_ai.*`) come
 from the model client, not from Gil, and nest under `gil.call`.
+
+## Filling forms
+
+A form is a different shape of task: a document with several fields, some typed by a person (observed) and some to
+be suggested (judged), settled one at a time. `FormResolver` suggests the judged fields without a model. It learns
+from settled documents only: which values were settled alongside which values of the other fields, and optionally
+which settled document is most similar.
+
+```csharp
+var form = new FormDefinition("ticket",
+[
+    new FieldDefinition("reporter", FieldRole.Observed) { UseAsEvidence = false },
+    new FieldDefinition("component", FieldRole.Observed),
+    new FieldDefinition("summary", FieldRole.Observed),
+    new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.5 },
+    new FieldDefinition("severity", FieldRole.Judged) { Candidates = ["low", "medium", "high"], Policy = FieldPolicy.ConfirmRequired },
+], PromptLanguage.English);
+
+var forms = new FormResolver(new FieldMemory(), new LexicalMemory());
+await forms.RebuildAsync(form, saved);
+```
+
+`UseAsEvidence = false` keeps a field's value out of every other field's suggestions. Use it for fields that identify a
+person, so that "this person, therefore this outcome" never hardens into memory. `ConfirmRequired` tells the
+application that a field's suggestion should never be filled in without a look. `Off` never suggests the field at all.
+
+Open a document once and pass values as they arrive. Every event returns fresh suggestions for the open fields whose
+evidence changed. Settling the fields in order therefore keeps the rest up to date, and accepting a suggestion then
+correcting it later leaves only the correction in memory:
+
+```csharp
+var session = forms.Open(form, "tickets/0412");
+await session.ObserveAsync("reporter", "Kim");
+var suggestions = await session.ObserveAsync("summary", "VPN drops every ten minutes");
+var updated = await session.SettleAsync("team", Settlement.Accept("network"));
+var document = session.Snapshot();
+```
+
+Each field is tried in a fixed order, and `FieldSuggestion.Source` says which layer answered:
+1. Values settled alongside the values the document already has.
+2. The value of a similar settled document, when the field sets `MemoryThreshold` and a document memory is given.
+3. The values settled most often for the field.
+
+When no layer has a candidate, a person decides. A frequency or a similarity is not a probability, so `Confidence`
+stays null.
+
+Save the snapshot the way you save documents. At startup, or when documents change elsewhere, pass them to
+`RebuildAsync`. A document's contribution is always what its current values imply, so live settling and rebuilding
+can be combined without counting anything twice. When reopening a saved document, put its judged values back with
+`Settlement.Restore`: it records no acceptance or correction.
+
+The right `MemoryThreshold` moves as memory grows. Choose it again from time to time — for instance when memory has
+grown by a tenth — by replaying the saved documents:
+
+```csharp
+var choice = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+```
+
+The replay looks each document up with all of its other values, while a live session often knows only some of them,
+so the precision it reports is an upper estimate for early fields.
 
 ## Build and test
 
