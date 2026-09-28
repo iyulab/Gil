@@ -3,6 +3,14 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Added
+
+- **`LexicalMemory.Nearest(task, state, count)`** lists the most similar remembered requests, most similar first
+  (ties keep the order they were remembered in); the first is the match `LookupAsync` returns. Use it to offer several
+  remembered answers as candidates rather than only the nearest one.
+
 ## 0.3.0
 
 ### Added

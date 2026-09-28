@@ -46,6 +46,24 @@ public sealed class LexicalMemory : IMemory
         return Task.FromResult<(MemoryMatch?, double)>((new MemoryMatch(key, similarity, answer), 0));
     }
 
+    /// <summary>
+    /// The <paramref name="count"/> most similar remembered requests, most similar first; on a tie, the one remembered
+    /// first. The first is the match <see cref="LookupAsync"/> returns. Empty when the task's memory is empty.
+    /// </summary>
+    /// <param name="task">The task whose memory to search.</param>
+    /// <param name="state">The request.</param>
+    /// <param name="count">At most this many; fewer when memory holds fewer.</param>
+    public IReadOnlyList<MemoryMatch> Nearest(string task, string state, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        if (!_indexes.TryGetValue(task, out var index) || index.Count == 0)
+        {
+            return [];
+        }
+
+        return [.. index.Top(Grams(state), count).Select(m => new MemoryMatch(m.Key, m.Similarity, m.Answer))];
+    }
+
     public Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -179,6 +197,32 @@ public sealed class LexicalMemory : IMemory
         /// <summary>The most similar row; on a tie, the one remembered first.</summary>
         public (string Key, double Similarity, string Answer) Nearest(Dictionary<string, int> query)
         {
+            var similarities = Similarities(query);
+            var best = 0;
+            for (var r = 1; r < similarities.Length; r++)
+            {
+                if (similarities[r] > similarities[best])
+                {
+                    best = r;
+                }
+            }
+
+            return (_rows[best].Key, similarities[best], _rows[best].Answer);
+        }
+
+        /// <summary>The <paramref name="count"/> most similar rows, most similar first; ties keep remembered order.</summary>
+        public IEnumerable<(string Key, double Similarity, string Answer)> Top(Dictionary<string, int> query, int count)
+        {
+            var similarities = Similarities(query);
+            return Enumerable.Range(0, similarities.Length)
+                .OrderByDescending(r => similarities[r])
+                .Take(count)
+                .Select(r => (_rows[r].Key, similarities[r], _rows[r].Answer));
+        }
+
+        /// <summary>The cosine of the query with every row, in remembered order.</summary>
+        private double[] Similarities(Dictionary<string, int> query)
+        {
             // An n-gram no row has ever held matches nothing, but it still weighs in the query's norm.
             var known = new List<(int Id, int Count)>(query.Count);
             var squares = 0.0;
@@ -199,8 +243,7 @@ public sealed class LexicalMemory : IMemory
             var weights = new double[ids.Length];
             var queryNorm = Math.Sqrt(squares + Math.Pow(Weigh(ids, [.. known.Select(k => k.Count)], weights), 2));
 
-            var best = 0;
-            var bestSimilarity = double.NegativeInfinity;
+            var similarities = new double[_rows.Count];
             for (var r = 0; r < _rows.Count; r++)
             {
                 var row = _rows[r];
@@ -226,13 +269,10 @@ public sealed class LexicalMemory : IMemory
                     similarity /= queryNorm * row.Norm;
                 }
 
-                if (similarity > bestSimilarity)
-                {
-                    (best, bestSimilarity) = (r, similarity);
-                }
+                similarities[r] = similarity;
             }
 
-            return (_rows[best].Key, bestSimilarity, _rows[best].Answer);
+            return similarities;
         }
 
         private (int[] Ids, int[] Counts) Intern(Dictionary<string, int> grams)

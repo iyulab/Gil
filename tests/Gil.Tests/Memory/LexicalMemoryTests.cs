@@ -226,4 +226,23 @@ public sealed class LexicalMemoryTests
         var root = OntologyYaml.Parse("id: root").Root;
         return new TaskDefinition("support", new TextContract(), root, new TaskPolicy { Thresholds = new([1.0], 1.0), MemoryThreshold = memoryThreshold }, PromptLanguage.English);
     }
+
+    [Fact]
+    public async Task Nearest_lists_the_most_similar_first_and_agrees_with_lookup()
+    {
+        var memory = new LexicalMemory();
+        memory.Nearest("task", "anything", 3).Should().BeEmpty();
+        await memory.RememberAsync("task", "t1", "refund for my last order please", "refund_policy", "t1", Ct);
+        await memory.RememberAsync("task", "t2", "my card was blocked at the shop", "cards_block", "t2", Ct);
+        await memory.RememberAsync("task", "t3", "please refund my order", "refund_policy", "t3", Ct);
+        await memory.RememberAsync("task", "t4", "please refund my order", "refund_duplicate", "t4", Ct);
+
+        var top = memory.Nearest("task", "please refund my order", 3);
+        var (single, _) = await memory.LookupAsync("task", "please refund my order", "q", Ct);
+
+        top.Select(m => m.Source).Should().Equal("t3", "t4", "t1"); // the tie keeps remembered order
+        top[0].Should().Be(single);
+        top.Select(m => m.Similarity).Should().BeInDescendingOrder();
+        memory.Nearest("task", "please refund my order", 10).Should().HaveCount(4);
+    }
 }
