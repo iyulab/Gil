@@ -40,6 +40,17 @@ public sealed class IronHiveChatModelTests
         result.RawResponse.Should().Be(Judged, "the body is kept as received");
     }
 
+    [Fact(Skip = "The OpenAI-compatible provider does not yet read a null logprob; enable once it does.")]
+    public async Task An_alternative_with_a_null_logprob_is_read_as_zero_probability()
+    {
+        // JSON has no -Infinity, so llama.cpp sends a zero-probability alternative's logprob as null.
+        var (model, _) = Model(Respond(HttpStatusCode.OK, Judged.Replace("\"logprob\":-3.1", "\"logprob\":null")));
+
+        var result = await model.CompleteAsync(Judge, TestContext.Current.CancellationToken);
+
+        result.TopLogprobs.Should().Equal(new TokenLogprob("B", -0.05), new TokenLogprob("A", double.NegativeInfinity));
+    }
+
     [Fact]
     public async Task Disposing_the_model_releases_the_client_it_built()
     {

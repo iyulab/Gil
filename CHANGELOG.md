@@ -3,6 +3,18 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Fixed
+
+- The telemetry store no longer throws on a zero-probability alternative. A `TokenLogprob` whose `Logprob` is
+  `-Infinity` is written as `"logprob": null` (JSON has no `-Infinity`; llama.cpp sends the same form) and read back
+  as `double.NegativeInfinity`.
+
+### Changed
+
+- `Gil.IronHive` builds on IronHive 0.45.0.
+
 ## 0.4.0
 
 ### Added

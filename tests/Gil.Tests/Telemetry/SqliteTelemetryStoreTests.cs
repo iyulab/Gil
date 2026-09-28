@@ -95,6 +95,25 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_zero_probability_alternative_is_written_as_standard_json()
+    {
+        var path = Path.Combine(_directory, "z.sqlite");
+        using (var store = new SqliteTelemetryStore(path, clock: new FixedClock()))
+        {
+            store.RecordCall(CompatibilityFixture.Judgment with
+            {
+                TopLogprobs = [new TokenLogprob("B", 0), new TokenLogprob("A", double.NegativeInfinity)],
+            });
+        }
+
+        using var read = Open(path);
+        var stored = (string)Row(read, "SELECT top_logprobs FROM calls")["top_logprobs"]!;
+        stored.Should().Be("""[{"token":"B","logprob":0},{"token":"A","logprob":null}]""");
+        JsonSerializer.Deserialize<List<TokenLogprob>>(stored, SqliteTelemetryStore.Json).Should()
+            .Equal(new TokenLogprob("B", 0), new TokenLogprob("A", double.NegativeInfinity));
+    }
+
+    [Fact]
     public void A_run_config_is_written_once_and_the_first_one_wins()
     {
         using var store = new SqliteTelemetryStore(Path.Combine(_directory, "r.sqlite"));

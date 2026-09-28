@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Gil.Habits;
 using Gil.Llm;
 using Microsoft.Data.Sqlite;
@@ -145,7 +146,36 @@ public sealed class SqliteTelemetryStore : ITelemetrySink, IHabitStatistics, ISh
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new TokenLogprobConverter() },
     };
+
+    /// <summary>
+    /// JSON has no -Infinity, so a zero-probability alternative is written as <c>null</c> — the form
+    /// llama.cpp sends — and read back as <see cref="double.NegativeInfinity"/>.
+    /// </summary>
+    private sealed class TokenLogprobConverter : JsonConverter<TokenLogprob>
+    {
+        public override TokenLogprob Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            using var document = JsonDocument.ParseValue(ref reader);
+            var root = document.RootElement;
+            var logprob = root.GetProperty("logprob");
+            return new TokenLogprob(
+                root.GetProperty("token").GetString()!,
+                logprob.ValueKind == JsonValueKind.Null ? double.NegativeInfinity : logprob.GetDouble());
+        }
+
+        public override void Write(Utf8JsonWriter writer, TokenLogprob value, JsonSerializerOptions options)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("token", value.Token);
+            if (double.IsFinite(value.Logprob))
+                writer.WriteNumber("logprob", value.Logprob);
+            else
+                writer.WriteNull("logprob");
+            writer.WriteEndObject();
+        }
+    }
 
     private readonly SqliteConnection _connection;
     private readonly TimeProvider _clock;
