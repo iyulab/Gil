@@ -1,3 +1,5 @@
+using Gil.Memory;
+
 namespace Gil.Forms;
 
 /// <summary>
@@ -11,11 +13,15 @@ namespace Gil.Forms;
 /// Memory is derived from settled documents: a <see cref="FormSession"/> puts its document again after every change, and
 /// <see cref="RebuildAsync"/> puts saved documents, and both replace what the document contributed before, so using the
 /// two together never counts a document twice: each memory ends up holding the same values under the same keys either
-/// way (a memory that reweighs as it grows may still score them slightly differently). Not thread-safe; one instance
-/// serves one caller at a time.
+/// way (a memory that reweighs as it grows may still score them slightly differently). Where documents disagree, the
+/// later <see cref="SettledDocument.SettledAt"/> wins: documents whose evidence for a field reads the same are one case,
+/// and the document memory holds only the case's latest settlement. Not thread-safe; one instance serves one caller at a
+/// time.
 /// </remarks>
 public sealed class FormResolver
 {
+    private readonly Dictionary<string, Cases> _cases = new(StringComparer.Ordinal);
+
     /// <param name="fieldMemory">Values settled alongside other field values.</param>
     /// <param name="documentMemory">
     /// Similar settled documents, looked up by the evidence fields' <c>name: value</c> lines under the task
@@ -31,11 +37,19 @@ public sealed class FormResolver
     /// Records one trace per suggestion, under the task <c>form/field</c>; where a model closed it, with the model's outcome.
     /// </param>
     /// <param name="candidateCount">How many candidates a suggestion offers at most.</param>
-    public FormResolver(FieldMemory fieldMemory, IMemory? documentMemory = null, IFieldModel? model = null, ITelemetrySink? sink = null, int candidateCount = 3)
+    /// <param name="timeProvider">The clock a session's settlements are timed by; the system clock when null.</param>
+    public FormResolver(
+        FieldMemory fieldMemory,
+        IMemory? documentMemory = null,
+        IFieldModel? model = null,
+        ITelemetrySink? sink = null,
+        int candidateCount = 3,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(fieldMemory);
         ArgumentOutOfRangeException.ThrowIfLessThan(candidateCount, 1);
-        (FieldMemory, DocumentMemory, Model, Sink, CandidateCount) = (fieldMemory, documentMemory, model, sink, candidateCount);
+        (FieldMemory, DocumentMemory, Model, Sink, CandidateCount, Time) =
+            (fieldMemory, documentMemory, model, sink, candidateCount, timeProvider ?? TimeProvider.System);
     }
 
     internal FieldMemory FieldMemory { get; }
@@ -48,14 +62,21 @@ public sealed class FormResolver
 
     internal int CandidateCount { get; }
 
-    /// <summary>Opens a document of the form. Put back a saved document's values with <see cref="FormSession.ObserveAsync"/> and <see cref="Settlement.Restore"/>.</summary>
+    internal TimeProvider Time { get; }
+
+    /// <summary>
+    /// Opens a document of the form. Put back a saved document's values with <see cref="FormSession.ObserveAsync"/> and
+    /// <see cref="Settlement.Restore"/>, and pass its <see cref="SettledDocument.SettledAt"/>: restoring does not make old
+    /// values new, and only accepting or correcting a field moves the document's settlement time on.
+    /// </summary>
     /// <param name="form">The form.</param>
     /// <param name="documentId">Opaque; the key the document's contribution to memory is kept under.</param>
-    public FormSession Open(FormDefinition form, string documentId)
+    /// <param name="settledAt">When a saved document was last settled; null for a new document, which starts at the present.</param>
+    public FormSession Open(FormDefinition form, string documentId, DateTimeOffset? settledAt = null)
     {
         ArgumentNullException.ThrowIfNull(form);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
-        return new FormSession(this, form, documentId);
+        return new FormSession(this, form, documentId, settledAt ?? Time.GetUtcNow());
     }
 
     /// <summary>
@@ -90,23 +111,147 @@ public sealed class FormResolver
         foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged && f.MemoryThreshold is not null))
         {
             var task = TaskName(form, field.Name);
-            if (!document.Values.TryGetValue(field.Name, out var value))
+            if (!_cases.TryGetValue(task, out var cases))
             {
-                DocumentMemory.Forget(task, document.DocumentId);
-                continue;
+                _cases[task] = cases = new Cases();
             }
 
-            try
+            var entry = document.Values.TryGetValue(field.Name, out var value)
+                ? new CaseEntry(document.DocumentId, Evidence(form, field.Name, document.Values), value, document.SettledAt)
+                : null;
+            var (forget, remember) = cases.Put(document.DocumentId, entry);
+            foreach (var id in forget)
             {
-                energy += await DocumentMemory.RememberAsync(task, document.DocumentId, Evidence(form, field.Name, document.Values), value, traceId, cancellationToken).ConfigureAwait(false);
+                DocumentMemory.Forget(task, id);
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+
+            foreach (var latest in remember)
             {
-                // Dropped like the resolver's failed writes: the document still holds the value and a rebuild restores it.
+                try
+                {
+                    energy += await DocumentMemory.RememberAsync(task, latest.DocumentId, latest.Evidence, latest.Value, traceId, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Dropped like the resolver's failed writes: the document still holds the value and a rebuild restores it.
+                }
             }
         }
 
         return energy;
+    }
+
+    /// <summary>
+    /// The case a field's evidence makes: evidence that reads the same after normalisation — the documents a lookup could
+    /// not tell apart.
+    /// </summary>
+    internal static string CaseKey(string evidence) => TextNormal.Collapse(evidence);
+
+    /// <summary>
+    /// Whether <paramref name="a"/> was settled later than <paramref name="b"/>; equal times go to the ordinally larger
+    /// document id, so the order is total and the same whatever order documents arrive in.
+    /// </summary>
+    internal static bool Later(DateTimeOffset a, string aId, DateTimeOffset b, string bId) =>
+        a != b ? a > b : string.CompareOrdinal(aId, bId) > 0;
+
+    /// <summary>A document's settled value for one field and the evidence it was settled on.</summary>
+    private sealed record CaseEntry(string DocumentId, string Evidence, string Value, DateTimeOffset SettledAt);
+
+    /// <summary>One field's documents grouped into cases, each represented in the document memory by its latest settlement.</summary>
+    private sealed class Cases
+    {
+        private readonly Dictionary<string, string> _caseOf = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, Dictionary<string, CaseEntry>> _members = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Replaces the document's entry (null: it has no value for the field) and returns the document memory writes that
+        /// keep every affected case represented by its latest settlement.
+        /// </summary>
+        public (List<string> Forget, List<CaseEntry> Remember) Put(string documentId, CaseEntry? entry)
+        {
+            var affected = new List<string>();
+            if (_caseOf.Remove(documentId, out var previous))
+            {
+                affected.Add(previous);
+            }
+
+            var current = entry is null ? null : CaseKey(entry.Evidence);
+            if (current is not null && current != previous)
+            {
+                affected.Add(current);
+            }
+
+            var before = affected.ToDictionary(c => c, Latest, StringComparer.Ordinal);
+            if (previous is not null)
+            {
+                Remove(previous, documentId);
+            }
+
+            if (entry is not null)
+            {
+                _caseOf[documentId] = current!;
+                if (!_members.TryGetValue(current!, out var members))
+                {
+                    _members[current!] = members = new Dictionary<string, CaseEntry>(StringComparer.Ordinal);
+                }
+
+                members[documentId] = entry;
+            }
+
+            var (forget, remember) = (new List<string>(), new List<CaseEntry>());
+            var represents = false;
+            foreach (var key in affected)
+            {
+                var (was, now) = (before[key], Latest(key));
+                represents |= now?.DocumentId == documentId;
+                if (was is not null && was.DocumentId != documentId && was.DocumentId != now?.DocumentId)
+                {
+                    forget.Add(was.DocumentId);
+                }
+
+                // The document itself is written again whenever it represents its case: its value or evidence may have changed.
+                if (now is not null && (now.DocumentId != was?.DocumentId || now.DocumentId == documentId))
+                {
+                    remember.Add(now);
+                }
+            }
+
+            if (!represents)
+            {
+                forget.Add(documentId);
+            }
+
+            return (forget, remember);
+        }
+
+        private void Remove(string key, string documentId)
+        {
+            var members = _members[key];
+            members.Remove(documentId);
+            if (members.Count == 0)
+            {
+                _members.Remove(key);
+            }
+        }
+
+        private CaseEntry? Latest(string key)
+        {
+            if (!_members.TryGetValue(key, out var members))
+            {
+                return null;
+            }
+
+            CaseEntry? latest = null;
+            foreach (var entry in members.Values)
+            {
+                if (latest is null || Later(entry.SettledAt, entry.DocumentId, latest.SettledAt, latest.DocumentId))
+                {
+                    latest = entry;
+                }
+            }
+
+            return latest;
+        }
     }
 
     /// <summary>The task a field's document memory, statistics and traces are kept under.</summary>

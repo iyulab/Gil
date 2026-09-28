@@ -109,6 +109,9 @@ internal static class ReadmeExample
         var updated = await session.SettleAsync("team", Settlement.Accept("network"));
         var document = session.Snapshot();
 
+        var reopened = forms.Open(form, saved[0].DocumentId, saved[0].SettledAt);
+        await reopened.SettleAsync("team", Settlement.Restore(saved[0].Values["team"]));
+
         var choice = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
     }
 }

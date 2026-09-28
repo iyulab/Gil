@@ -9,7 +9,8 @@ namespace Gil.Forms;
 /// </summary>
 /// <remarks>
 /// A settled value can be settled again: accepting a suggestion and correcting it later leaves only the correction in
-/// memory, because the document's contribution is always what its current values imply. A rejected field is not
+/// memory, because the document's contribution is always what its current values imply. Accepting or correcting a field
+/// moves the document's settlement time to the present; observing, restoring, rejecting and reverting do not. A rejected field is not
 /// suggested again until it is reverted or settled. Not thread-safe.
 /// </remarks>
 public sealed class FormSession
@@ -17,9 +18,10 @@ public sealed class FormSession
     private readonly FormResolver _resolver;
     private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
     private readonly HashSet<string> _rejected = new(StringComparer.Ordinal);
+    private DateTimeOffset _settledAt;
 
-    internal FormSession(FormResolver resolver, FormDefinition form, string documentId) =>
-        (_resolver, Form, DocumentId) = (resolver, form, documentId);
+    internal FormSession(FormResolver resolver, FormDefinition form, string documentId, DateTimeOffset settledAt) =>
+        (_resolver, Form, DocumentId, _settledAt) = (resolver, form, documentId, settledAt);
 
     public FormDefinition Form { get; }
 
@@ -64,8 +66,12 @@ public sealed class FormSession
             case SettlementKind.Revert:
                 Set(field, null);
                 break;
+            case SettlementKind.Restore:
+                Set(field, settlement.Value); // a saved value keeps the saved document's time
+                break;
             default:
                 Set(field, settlement.Value);
+                _settledAt = _resolver.Time.GetUtcNow();
                 break;
         }
 
@@ -84,8 +90,11 @@ public sealed class FormSession
         return suggestions;
     }
 
-    /// <summary>The document's values as they stand — observed and settled — which is what the application saves.</summary>
-    public SettledDocument Snapshot() => new(DocumentId, new Dictionary<string, string>(_values, StringComparer.Ordinal));
+    /// <summary>
+    /// The document's values as they stand — observed and settled — which is what the application saves, with the time a
+    /// field was last accepted or corrected (or the time the document was opened with, if none was since).
+    /// </summary>
+    public SettledDocument Snapshot() => new(DocumentId, new Dictionary<string, string>(_values, StringComparer.Ordinal), _settledAt);
 
     private void Set(string field, string? value)
     {

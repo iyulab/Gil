@@ -308,8 +308,19 @@ traced like any resolved request — `FeedbackAsync` on its trace id then reache
 
 Save the snapshot the way you save documents. At startup, or when documents change elsewhere, pass them to
 `RebuildAsync`. A document's contribution is always what its current values imply, so live settling and rebuilding
-can be combined without counting anything twice. When reopening a saved document, put its judged values back with
-`Settlement.Restore`: it records no acceptance or correction.
+can be combined without counting anything twice.
+
+Every `SettledDocument` carries `SettledAt`, when it was last settled — a file's last write time serves. Where
+documents disagree, the later settlement wins: values settled equally often rank by their latest settlement, and
+documents whose evidence reads the same are one case that a similar-document lookup answers with its latest
+settlement. The result is the same whatever order documents arrive in. When reopening a saved document, pass its time
+and put its judged values back with `Settlement.Restore`, which records no acceptance or correction and leaves the
+time as it was; only accepting or correcting a field moves it on:
+
+```csharp
+var reopened = forms.Open(form, saved[0].DocumentId, saved[0].SettledAt);
+await reopened.SettleAsync("team", Settlement.Restore(saved[0].Values["team"]));
+```
 
 The right `MemoryThreshold` moves as memory grows. Choose it again from time to time — for instance when memory has
 grown by a tenth — by replaying the saved documents:

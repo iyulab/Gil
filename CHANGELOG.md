@@ -18,7 +18,13 @@ with what to do.
 - **`FieldMemory`** suggests a judged field's value from how often each value was settled alongside the values the
   document's other fields have, with no model and no call. A document contributes as a whole and putting it again
   replaces its contribution, so settling field by field and rebuilding from saved documents reach the same state in
-  any order.
+  any order. Values settled equally often rank by their latest settlement.
+- **`SettledDocument.SettledAt`** — when a document was last settled. Where documents disagree the later settlement
+  wins, so memory is the same whatever order documents arrive in, including a partial rebuild after live settling.
+  Documents whose evidence for a field reads the same are one case, and a similar-document lookup answers with the
+  case's latest settlement. In a session only accepting or correcting a field moves the time on; pass a reopened
+  document's saved time to `Open` so that restoring it does not make its values new. `FormResolver` takes a
+  `TimeProvider`.
 - **`FormResolver` and `FormSession`** suggest a form's judged fields one document at a time. Open a document once,
   then pass values as they arrive: `ObserveAsync` for observed fields, `SettleAsync` with `Settlement.Accept`,
   `Correct`, `Reject`, `Revert` or `Restore` for judged ones. Each event returns fresh suggestions for the open fields
@@ -31,8 +37,8 @@ with what to do.
   overriding one that did); its candidate goes ahead of the field's overall frequency and it alone reports a
   confidence. **`ResolverFieldModel`** puts the resolver behind it, one task per field. With the form resolver's sink
   and tasks named `form/field`, the resolution closes the suggestion's trace itself, so feedback reaches the tree.
-- **`ThresholdSelection.SelectAsync`** chooses a field's `MemoryThreshold` by replaying settled documents oldest
-  first into an empty memory: the lowest threshold whose answers reach a target precision, on at least a given number
+- **`ThresholdSelection.SelectAsync`** chooses a field's `MemoryThreshold` by replaying settled documents in the order
+  they were settled into an empty memory, one document per case as the form resolver keeps it: the lowest threshold whose answers reach a target precision, on at least a given number
   of answers, with its answer rate — or null when none does. The right threshold moves as memory grows, so choose it
   again as it grows rather than fixing it once.
 

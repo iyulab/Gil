@@ -11,7 +11,9 @@ namespace Gil.Forms;
 /// <remarks>
 /// A document contributes as a whole: <see cref="Put"/> replaces whatever it contributed before with what its current
 /// values imply, so settling fields one by one and rebuilding from the saved documents reach the same state, in any
-/// order and however often either is done. Every other field of the document is a key while learning; only the fields
+/// order and however often either is done. Where values are settled equally often, the one settled most recently comes
+/// first, so a correction outranks the practice it corrects as soon as it has caught up with it — the documents'
+/// settlement times decide that, not the order they arrived in. Every other field of the document is a key while learning; only the fields
 /// known so far are keys while suggesting. Keys are compared after NFKC, lower-casing and collapsing whitespace, and
 /// values longer than <c>maxKeyLength</c> are not keys — free text rarely recurs. Not thread-safe; one instance serves
 /// one caller at a time.
@@ -47,8 +49,8 @@ public sealed class FieldMemory
                 continue;
             }
 
-            tallies.Add(new Tally(field.Name, null, value));
-            tallies.AddRange(Keys(form, field, document.Values).Select(key => new Tally(field.Name, key, value)));
+            tallies.Add(new Tally(field.Name, null, value, document.SettledAt));
+            tallies.AddRange(Keys(form, field, document.Values).Select(key => new Tally(field.Name, key, value, document.SettledAt)));
         }
 
         if (tallies.Count > 0)
@@ -69,8 +71,9 @@ public sealed class FieldMemory
     /// <summary>
     /// The <paramref name="count"/> values most likely for <paramref name="field"/> given the values known so far, best
     /// first: the values settled under the known keys (with the key that backs each most as its evidence), then, in the
-    /// places left, the field's most frequently settled values (without evidence). Ties go to the ordinally smaller value
-    /// in both parts, so the order documents arrived in never matters. Empty when nothing was settled.
+    /// places left, the field's most frequently settled values (without evidence). Ties go to the value settled most
+    /// recently, then to the ordinally smaller value, in both parts, so the order documents arrived in never matters.
+    /// Empty when nothing was settled.
     /// </summary>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
@@ -87,7 +90,7 @@ public sealed class FieldMemory
             return [];
         }
 
-        var scores = new Dictionary<string, (double Score, double Best, Key Key)>(StringComparer.Ordinal);
+        var scores = new Dictionary<string, (double Score, double Best, Key Key, DateTimeOffset Latest)>(StringComparer.Ordinal);
         foreach (var key in Keys(form, definition, known))
         {
             if (!index.Values.TryGetValue(new Slot(field, key), out var counts))
@@ -95,15 +98,17 @@ public sealed class FieldMemory
                 continue;
             }
 
-            foreach (var (value, share) in counts.Shares())
+            foreach (var (value, share, latest) in counts.Shares())
             {
-                var (score, best, strongest) = scores.GetValueOrDefault(value);
-                scores[value] = share > best ? (score + share, share, key) : (score + share, best, strongest);
+                var (score, best, strongest, last) = scores.GetValueOrDefault(value, (0, 0, default, DateTimeOffset.MinValue));
+                last = latest > last ? latest : last;
+                scores[value] = share > best ? (score + share, share, key, last) : (score + share, best, strongest, last);
             }
         }
 
         var keyed = scores
             .OrderByDescending(s => s.Value.Score)
+            .ThenByDescending(s => s.Value.Latest)
             .ThenBy(s => s.Key, StringComparer.Ordinal)
             .Take(count)
             .Select(s => new FieldCandidate(s.Key, s.Value.Score, FieldSource.SettledFieldMemory, $"{s.Value.Key.Field}: {s.Value.Key.Value}"));
@@ -147,8 +152,8 @@ public sealed class FieldMemory
     /// <summary>A field's counts under one key, or overall when the key is null.</summary>
     private readonly record struct Slot(string Field, Key? Key);
 
-    /// <summary>One increment a document made: a value settled for a field, under a key or overall.</summary>
-    private readonly record struct Tally(string Field, Key? Key, string Value);
+    /// <summary>One increment a document made: a value settled for a field, under a key or overall, at the document's settlement time.</summary>
+    private readonly record struct Tally(string Field, Key? Key, string Value, DateTimeOffset SettledAt);
 
     private sealed class FormIndex
     {
@@ -169,7 +174,7 @@ public sealed class FieldMemory
                     Values[slot] = counts = new Counts();
                 }
 
-                counts.Add(tally.Value);
+                counts.Add(tally.Value, tally.SettledAt);
             }
         }
 
@@ -184,7 +189,7 @@ public sealed class FieldMemory
             {
                 var slot = new Slot(tally.Field, tally.Key);
                 var counts = Values[slot];
-                counts.Subtract(tally.Value);
+                counts.Subtract(tally.Value, tally.SettledAt);
                 if (counts.Total == 0)
                 {
                     Values.Remove(slot);
@@ -193,38 +198,46 @@ public sealed class FieldMemory
         }
     }
 
-    /// <summary>How often each value was settled.</summary>
+    /// <summary>How often, and when, each value was settled.</summary>
     private sealed class Counts
     {
-        private readonly Dictionary<string, int> _values = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<DateTimeOffset>> _values = new(StringComparer.Ordinal);
 
         public int Total { get; private set; }
 
-        public void Add(string value)
+        public void Add(string value, DateTimeOffset settledAt)
         {
-            _values[value] = _values.GetValueOrDefault(value) + 1;
+            if (!_values.TryGetValue(value, out var times))
+            {
+                _values[value] = times = [];
+            }
+
+            times.Add(settledAt);
             Total++;
         }
 
-        public void Subtract(string value)
+        public void Subtract(string value, DateTimeOffset settledAt)
         {
-            if (_values[value] == 1)
+            var times = _values[value];
+            times.Remove(settledAt);
+            if (times.Count == 0)
             {
                 _values.Remove(value);
-            }
-            else
-            {
-                _values[value]--;
             }
 
             Total--;
         }
 
-        /// <summary>Each value's share of the total, most frequent first; ties to the ordinally smaller value.</summary>
-        public IEnumerable<(string Value, double Share)> Shares() =>
+        /// <summary>
+        /// Each value's share of the total and when it was last settled, most frequent first; ties to the one settled most
+        /// recently, then to the ordinally smaller value.
+        /// </summary>
+        public IEnumerable<(string Value, double Share, DateTimeOffset Latest)> Shares() =>
             _values
-                .OrderByDescending(v => v.Value)
-                .ThenBy(v => v.Key, StringComparer.Ordinal)
-                .Select(v => (v.Key, (double)v.Value / Total));
+                .Select(v => (Value: v.Key, v.Value.Count, Latest: v.Value.Max()))
+                .OrderByDescending(v => v.Count)
+                .ThenByDescending(v => v.Latest)
+                .ThenBy(v => v.Value, StringComparer.Ordinal)
+                .Select(v => (v.Value, (double)v.Count / Total, v.Latest));
     }
 }

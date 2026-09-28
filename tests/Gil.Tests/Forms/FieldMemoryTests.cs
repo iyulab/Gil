@@ -1,3 +1,4 @@
+using System.Globalization;
 using AwesomeAssertions;
 using Gil.Forms;
 
@@ -17,7 +18,10 @@ public sealed class FieldMemoryTests
         PromptLanguage.English);
 
     private static SettledDocument Doc(string id, params (string Field, string Value)[] values) =>
-        new(id, values.ToDictionary(v => v.Field, v => v.Value));
+        new(id, values.ToDictionary(v => v.Field, v => v.Value), At(id));
+
+    /// <summary>Documents settle in the order of their numbers, a minute apart.</summary>
+    private static DateTimeOffset At(string id) => DateTimeOffset.UnixEpoch.AddMinutes(int.Parse(id[1..], CultureInfo.InvariantCulture));
 
     private static Dictionary<string, string> Known(params (string Field, string Value)[] values) =>
         values.ToDictionary(v => v.Field, v => v.Value);
@@ -151,7 +155,7 @@ public sealed class FieldMemoryTests
             foreach (var (field, value) in document.Values)
             {
                 sofar[field] = value;
-                live.Put(Ticket, new SettledDocument(document.DocumentId, new Dictionary<string, string>(sofar)));
+                live.Put(Ticket, new SettledDocument(document.DocumentId, new Dictionary<string, string>(sofar), document.SettledAt));
             }
         }
 

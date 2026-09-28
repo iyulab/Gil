@@ -139,7 +139,11 @@ public sealed record FormDefinition
 /// <summary>A document's field values as last settled — observed fields included, since they are the evidence.</summary>
 /// <param name="DocumentId">Opaque to the runtime: a path, a key, whatever the application identifies documents by.</param>
 /// <param name="Values">Field name to value; a field without a value is absent.</param>
-public sealed record SettledDocument(string DocumentId, IReadOnlyDictionary<string, string> Values);
+/// <param name="SettledAt">
+/// When a judged value of the document was last settled. Where settled documents disagree, the later settlement wins, so
+/// memory reaches the same state whatever order documents arrive in. A file's last write time serves.
+/// </param>
+public sealed record SettledDocument(string DocumentId, IReadOnlyDictionary<string, string> Values, DateTimeOffset SettledAt);
 
 /// <summary>The layer a suggested value came from.</summary>
 public enum FieldSource

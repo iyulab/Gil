@@ -1,3 +1,4 @@
+using System.Globalization;
 using AwesomeAssertions;
 using Gil.Forms;
 using Gil.Memory;
@@ -20,7 +21,10 @@ public sealed class ThresholdSelectionTests
     private static SettledDocument Doc(string id, string summary, string? team) =>
         new(id, team is null
             ? new Dictionary<string, string> { ["reporter"] = "Kim", ["summary"] = summary }
-            : new Dictionary<string, string> { ["reporter"] = "Kim", ["summary"] = summary, ["team"] = team });
+            : new Dictionary<string, string> { ["reporter"] = "Kim", ["summary"] = summary, ["team"] = team }, At(id));
+
+    /// <summary>Documents settle in the order of their numbers, a minute apart.</summary>
+    private static DateTimeOffset At(string id) => DateTimeOffset.UnixEpoch.AddMinutes(int.Parse(id[1..], CultureInfo.InvariantCulture));
 
     /// <summary>Answers lookups from a script and logs every call in order.</summary>
     private sealed class ScriptedMemory(params (double Similarity, string Answer)?[] script) : IMemory

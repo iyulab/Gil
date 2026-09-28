@@ -16,15 +16,16 @@ public sealed record ThresholdChoice(double Threshold, double Precision, double 
 public static class ThresholdSelection
 {
     /// <summary>
-    /// Replays the documents oldest first: each is looked up in a memory holding only the documents before it, by the
-    /// evidence lines a session would send, and then remembered. Returns the lowest threshold at which the answers given
+    /// Replays the documents in the order they were settled: each is looked up in a memory holding only the documents
+    /// settled before it, by the evidence lines a session would send, and then remembered — replacing an earlier document
+    /// of the same case, as the form resolver does. Returns the lowest threshold at which the answers given
     /// reach <paramref name="targetPrecision"/> with at least <paramref name="minimumAnswered"/> of them, or null when no
     /// threshold does — memory then should not answer this field on its own.
     /// </summary>
     /// <param name="memory">An empty memory of the kind in use; the replay fills it. Never the one serving suggestions.</param>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
-    /// <param name="documents">Settled documents, oldest first.</param>
+    /// <param name="documents">Settled documents, in any order.</param>
     /// <param name="targetPrecision">The share of answers that must match, in (0, 1].</param>
     /// <param name="minimumAnswered">
     /// The fewest answers a precision may rest on. There is no default: a precision from a handful of answers is noise,
@@ -56,7 +57,11 @@ public static class ThresholdSelection
         var matches = new List<(double Similarity, bool Correct)>();
         var lookups = 0;
         var remembered = 0;
-        foreach (var document in documents)
+        var cases = new Dictionary<string, string>(StringComparer.Ordinal); // case → the document representing it
+        var ordered = documents
+            .OrderBy(d => d.SettledAt)
+            .ThenBy(d => d.DocumentId, StringComparer.Ordinal); // the form resolver's order: later wins, then the larger id
+        foreach (var document in ordered)
         {
             if (!document.Values.TryGetValue(field, out var settled))
             {
@@ -74,6 +79,13 @@ public static class ThresholdSelection
                 }
             }
 
+            var key = FormResolver.CaseKey(evidence);
+            if (cases.TryGetValue(key, out var earlier))
+            {
+                memory.Forget(task, earlier);
+            }
+
+            cases[key] = document.DocumentId;
             await memory.RememberAsync(task, document.DocumentId, evidence, settled, traceId, cancellationToken).ConfigureAwait(false);
             remembered++;
         }

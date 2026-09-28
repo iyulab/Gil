@@ -1,3 +1,4 @@
+using System.Globalization;
 using AwesomeAssertions;
 using Gil.Forms;
 using Gil.Memory;
@@ -21,7 +22,10 @@ public sealed class FormSessionTests
         PromptLanguage.English);
 
     private static SettledDocument Doc(string id, params (string Field, string Value)[] values) =>
-        new(id, values.ToDictionary(v => v.Field, v => v.Value));
+        new(id, values.ToDictionary(v => v.Field, v => v.Value), At(id));
+
+    /// <summary>Documents settle in the order of their numbers, a minute apart.</summary>
+    private static DateTimeOffset At(string id) => DateTimeOffset.UnixEpoch.AddMinutes(int.Parse(id[1..], CultureInfo.InvariantCulture));
 
     private static readonly SettledDocument[] History =
     [
