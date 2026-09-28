@@ -27,6 +27,10 @@ with what to do.
   a person decides. `Snapshot()` is the document to save and `RebuildAsync` puts saved documents back into memory;
   both replace a document's earlier contribution, so they can be combined freely. One trace per suggestion, under
   the task `form/field`.
+- **`ThresholdSelection.SelectAsync`** chooses a field's `MemoryThreshold` by replaying settled documents oldest
+  first into an empty memory: the lowest threshold whose answers reach a target precision, on at least a given number
+  of answers, with its answer rate — or null when none does. The right threshold moves as memory grows, so choose it
+  again as it grows rather than fixing it once.
 
 ## 0.3.0
 
