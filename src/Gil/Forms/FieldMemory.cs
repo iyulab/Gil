@@ -28,7 +28,7 @@ public sealed class FieldMemory
         _maxKeyLength = maxKeyLength;
     }
 
-    /// <summary>How many documents the form's memory holds.</summary>
+    /// <summary>How many documents with at least one settled judged field the form's memory holds.</summary>
     public int Count(string form) => _forms.TryGetValue(form, out var index) ? index.Documents : 0;
 
     /// <summary>Replaces what the document contributed with what its current values imply. Values of fields the form does not have are ignored.</summary>
@@ -51,7 +51,10 @@ public sealed class FieldMemory
             tallies.AddRange(Keys(form, field, document.Values).Select(key => new Tally(field.Name, key, value)));
         }
 
-        index.Add(document.DocumentId, tallies);
+        if (tallies.Count > 0)
+        {
+            index.Add(document.DocumentId, tallies);
+        }
     }
 
     /// <summary>Removes what the document contributed, if anything.</summary>

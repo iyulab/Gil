@@ -160,8 +160,30 @@ public enum FieldSource
 /// <param name="Value">The value as it was settled before (or as the model chose it).</param>
 /// <param name="Score">On the layer's own scale; scores of different layers are not comparable.</param>
 /// <param name="Source">The layer.</param>
-/// <param name="Evidence">What the value rests on, for display — such as the other field value it was most often settled with; null when there is nothing specific.</param>
+/// <param name="Evidence">
+/// What the value rests on, for display: the other field value that backs it most (<c>field: value</c>), or the id of the
+/// similar document; null when there is nothing specific.
+/// </param>
 public sealed record FieldCandidate(string Value, double Score, FieldSource Source, string? Evidence);
+
+/// <summary>The suggestion for one judged field.</summary>
+/// <param name="Field">The field.</param>
+/// <param name="Candidates">Best first, at most the resolver's candidate count; empty when no layer had one and a person decides.</param>
+/// <param name="Source">The layer the first candidate came from; <see cref="FieldSource.None"/> when there is none.</param>
+/// <param name="Policy">The field's policy, so the application can tell a value it may offer from one it must have confirmed.</param>
+/// <param name="Confidence">A judgment probability, from a model only. Null otherwise — a frequency or a similarity is not one.</param>
+/// <param name="Elapsed">How long producing the suggestion took, so the application can show that it is waiting.</param>
+/// <param name="Energy">Total cost of every call made for it.</param>
+/// <param name="TraceId">The suggestion's id in telemetry.</param>
+public sealed record FieldSuggestion(
+    string Field,
+    IReadOnlyList<FieldCandidate> Candidates,
+    FieldSource Source,
+    FieldPolicy Policy,
+    double? Confidence,
+    TimeSpan Elapsed,
+    double Energy,
+    string TraceId);
 
 /// <summary>What happened to a judged field.</summary>
 public enum SettlementKind

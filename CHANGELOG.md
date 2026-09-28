@@ -19,6 +19,14 @@ with what to do.
   document's other fields have, with no model and no call. A document contributes as a whole and putting it again
   replaces its contribution, so settling field by field and rebuilding from saved documents reach the same state in
   any order.
+- **`FormResolver` and `FormSession`** suggest a form's judged fields one document at a time. Open a document once,
+  then pass values as they arrive: `ObserveAsync` for observed fields, `SettleAsync` with `Settlement.Accept`,
+  `Correct`, `Reject`, `Revert` or `Restore` for judged ones. Each event returns fresh suggestions for the open fields
+  whose evidence changed. A field is suggested from values settled alongside the known ones, then from a similar
+  settled document (an optional `IMemory`, per field `MemoryThreshold`), then from its overall frequency; with none,
+  a person decides. `Snapshot()` is the document to save and `RebuildAsync` puts saved documents back into memory;
+  both replace a document's earlier contribution, so they can be combined freely. One trace per suggestion, under
+  the task `form/field`.
 
 ## 0.3.0
 
