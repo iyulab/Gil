@@ -3,8 +3,9 @@ namespace Gil.Forms;
 /// <summary>
 /// Suggests the judged fields of a form, one document at a time. Each field is tried in a fixed order — values settled
 /// alongside the document's other values (<see cref="FieldMemory"/>), then the value of a similar settled document (an
-/// optional <see cref="IMemory"/>), then values settled most often overall — and a field no layer can suggest is left to
-/// a person. Without a document memory the order simply has one layer less; every result has the same shape.
+/// optional <see cref="IMemory"/>), then a model (an optional <see cref="IFieldModel"/>, called only when neither memory
+/// had evidence), then values settled most often overall — and a field no layer can suggest is left to a person.
+/// Without a document memory or a model the order simply has a layer less; every result has the same shape.
 /// </summary>
 /// <remarks>
 /// Memory is derived from settled documents: a <see cref="FormSession"/> puts its document again after every change, and
@@ -22,18 +23,26 @@ public sealed class FormResolver
     /// <see cref="FieldDefinition.MemoryThreshold"/>. A failing lookup is a miss and a failing write is dropped — memory
     /// is rebuilt from the documents.
     /// </param>
-    /// <param name="sink">Records one trace per suggestion, under the task <c>form/field</c>.</param>
+    /// <param name="model">
+    /// Suggests a field neither memory had evidence for: no value settled alongside the known ones, no similar document
+    /// close enough. A model is weaker than a memory with evidence, so it never overrides one.
+    /// </param>
+    /// <param name="sink">
+    /// Records one trace per suggestion, under the task <c>form/field</c>; where a model closed it, with the model's outcome.
+    /// </param>
     /// <param name="candidateCount">How many candidates a suggestion offers at most.</param>
-    public FormResolver(FieldMemory fieldMemory, IMemory? documentMemory = null, ITelemetrySink? sink = null, int candidateCount = 3)
+    public FormResolver(FieldMemory fieldMemory, IMemory? documentMemory = null, IFieldModel? model = null, ITelemetrySink? sink = null, int candidateCount = 3)
     {
         ArgumentNullException.ThrowIfNull(fieldMemory);
         ArgumentOutOfRangeException.ThrowIfLessThan(candidateCount, 1);
-        (FieldMemory, DocumentMemory, Sink, CandidateCount) = (fieldMemory, documentMemory, sink, candidateCount);
+        (FieldMemory, DocumentMemory, Model, Sink, CandidateCount) = (fieldMemory, documentMemory, model, sink, candidateCount);
     }
 
     internal FieldMemory FieldMemory { get; }
 
     internal IMemory? DocumentMemory { get; }
+
+    internal IFieldModel? Model { get; }
 
     internal ITelemetrySink? Sink { get; }
 
@@ -103,9 +112,17 @@ public sealed class FormResolver
     /// <summary>The task a field's document memory, statistics and traces are kept under.</summary>
     internal static string TaskName(FormDefinition form, string field) => $"{form.Name}/{field}";
 
+    /// <summary>The values of the fields that support <paramref name="field"/>, in the form's order.</summary>
+    internal static List<KeyValuePair<string, string>> EvidenceValues(FormDefinition form, string field, IReadOnlyDictionary<string, string> values) =>
+        [.. form.Fields
+            .Where(f => form.Supports(f.Name, field) && values.ContainsKey(f.Name))
+            .Select(f => KeyValuePair.Create(f.Name, values[f.Name]))];
+
     /// <summary>The <c>name: value</c> lines of the fields that support <paramref name="field"/>, in the form's order.</summary>
     internal static string Evidence(FormDefinition form, string field, IReadOnlyDictionary<string, string> values) =>
-        string.Join('\n', form.Fields
-            .Where(f => form.Supports(f.Name, field) && values.ContainsKey(f.Name))
-            .Select(f => $"{f.Name}: {values[f.Name]}"));
+        Lines(EvidenceValues(form, field, values));
+
+    /// <summary>Evidence as <c>name: value</c> lines — the request a similar document is looked up by, and a model's input.</summary>
+    internal static string Lines(IEnumerable<KeyValuePair<string, string>> evidence) =>
+        string.Join('\n', evidence.Select(e => $"{e.Key}: {e.Value}"));
 }

@@ -27,6 +27,10 @@ with what to do.
   a person decides. `Snapshot()` is the document to save and `RebuildAsync` puts saved documents back into memory;
   both replace a document's earlier contribution, so they can be combined freely. One trace per suggestion, under
   the task `form/field`.
+- **`IFieldModel`** lets `FormResolver` ask a model for a field that neither memory had evidence for (never
+  overriding one that did); its candidate goes ahead of the field's overall frequency and it alone reports a
+  confidence. **`ResolverFieldModel`** puts the resolver behind it, one task per field. With the form resolver's sink
+  and tasks named `form/field`, the resolution closes the suggestion's trace itself, so feedback reaches the tree.
 - **`ThresholdSelection.SelectAsync`** chooses a field's `MemoryThreshold` by replaying settled documents oldest
   first into an empty memory: the lowest threshold whose answers reach a target precision, on at least a given number
   of answers, with its answer rate — or null when none does. The right threshold moves as memory grows, so choose it

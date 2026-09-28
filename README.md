@@ -298,10 +298,13 @@ var document = session.Snapshot();
 Each field is tried in a fixed order, and `FieldSuggestion.Source` says which layer answered:
 1. Values settled alongside the values the document already has.
 2. The value of a similar settled document, when the field sets `MemoryThreshold` and a document memory is given.
-3. The values settled most often for the field.
+3. A model, when one is given (`IFieldModel`; `ResolverFieldModel` puts the resolver above behind it, one task per
+   field). It is asked only when neither memory had evidence, so it never overrides a value the document supports.
+4. The values settled most often for the field.
 
-When no layer has a candidate, a person decides. A frequency or a similarity is not a probability, so `Confidence`
-stays null.
+When no layer has a candidate, a person decides. Only a model reports `Confidence`: a frequency or a similarity is not
+a probability. Give `ResolverFieldModel` the same sink and name each task `form/field`, and a model's suggestion is
+traced like any resolved request — `FeedbackAsync` on its trace id then reaches the tree.
 
 Save the snapshot the way you save documents. At startup, or when documents change elsewhere, pass them to
 `RebuildAsync`. A document's contribution is always what its current values imply, so live settling and rebuilding

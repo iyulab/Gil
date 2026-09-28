@@ -125,30 +125,48 @@ public sealed class FormSession
         var started = Stopwatch.GetTimestamp();
         var traceId = Guid.NewGuid().ToString("N");
         var task = FormResolver.TaskName(Form, field.Name);
-        var evidence = FormResolver.Evidence(Form, field.Name, _values);
-        _resolver.Sink?.OpenTrace(traceId, task, evidence);
+        var evidence = FormResolver.EvidenceValues(Form, field.Name, _values);
+        var lines = FormResolver.Lines(evidence);
+        _resolver.Sink?.OpenTrace(traceId, task, lines); // opened first: a model resolving under the same id closes it
 
         var remembered = _resolver.FieldMemory.Rank(Form, field.Name, _values, _resolver.CandidateCount);
-        var (similar, recall, energy) = await SimilarAsync(field, task, evidence, traceId, cancellationToken).ConfigureAwait(false);
+        var keyed = remembered.Where(c => c.Evidence is not null).ToList();
+        var (similar, recall, energy) = await SimilarAsync(field, task, lines, traceId, cancellationToken).ConfigureAwait(false);
 
-        // Values backed by a known key first, then a similar document, then the field's overall frequency — the last is
-        // a guess without evidence, so a similar document outranks it.
-        var candidates = remembered.Where(c => c.Evidence is not null)
+        // A model only where neither memory had evidence: a value backed by what the document says beats a model's guess.
+        FieldModelResult? modelled = null;
+        if (_resolver.Model is IFieldModel model && keyed.Count == 0 && similar.Count == 0)
+        {
+            modelled = await model.SuggestAsync(Form, field.Name, evidence, traceId, cancellationToken).ConfigureAwait(false);
+            energy += modelled.Energy;
+        }
+
+        // Values backed by a known key first, then a similar document, then the model; the field's overall frequency
+        // comes last, being a guess without evidence.
+        var candidates = keyed
             .Concat(similar)
+            .Concat(modelled?.Candidates ?? [])
             .Concat(remembered.Where(c => c.Evidence is null))
             .DistinctBy(c => c.Value, StringComparer.Ordinal)
             .Take(_resolver.CandidateCount)
             .ToList();
         var source = candidates.Count > 0 ? candidates[0].Source : FieldSource.None;
+        var confidence = source == FieldSource.Model ? modelled?.Confidence : null;
 
-        _resolver.Sink?.CloseTrace(traceId, new TraceOutcome
+        // A model that resolved under this id through the same sink has closed the trace with its own outcome.
+        if (_resolver.Sink is ITelemetrySink sink && (modelled is null || sink.FindTrace(traceId) is null))
         {
-            Mode = Mode(source),
-            Output = candidates.Count > 0 ? candidates[0].Value : null,
-            Energy = energy,
-            Recall = recall,
-        });
-        return new FieldSuggestion(field.Name, candidates, source, field.Policy, null, Stopwatch.GetElapsedTime(started), energy, traceId);
+            sink.CloseTrace(traceId, new TraceOutcome
+            {
+                Mode = Mode(source),
+                Output = candidates.Count > 0 ? candidates[0].Value : null,
+                Confidence = confidence,
+                Energy = energy,
+                Recall = recall,
+            });
+        }
+
+        return new FieldSuggestion(field.Name, candidates, source, field.Policy, confidence, Stopwatch.GetElapsedTime(started), energy, traceId);
     }
 
     /// <summary>The nearest similar settled document's value when it is similar enough, and what the lookup found.</summary>

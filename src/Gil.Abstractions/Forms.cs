@@ -185,6 +185,36 @@ public sealed record FieldSuggestion(
     double Energy,
     string TraceId);
 
+/// <summary>What a model suggested for one field.</summary>
+/// <param name="Candidates">Best first; empty when the model abstained.</param>
+/// <param name="Confidence">The model's judgment probability for the first candidate; null when it reported none.</param>
+/// <param name="Energy">Total cost of the calls made.</param>
+public sealed record FieldModelResult(IReadOnlyList<FieldCandidate> Candidates, double? Confidence, double Energy);
+
+/// <summary>
+/// A model that suggests one field. The form resolver calls it only for a field no memory had evidence for, and passes
+/// only the values the field may rest on — fields that are not evidence never reach it.
+/// </summary>
+/// <remarks>
+/// The form resolver opens the suggestion's trace first, under the task <c>form/field</c>. A model that resolves under the
+/// same id through the same sink and closes the trace makes its own outcome the suggestion's record — so feedback on the
+/// suggestion reaches the model — and the form resolver leaves it as it is; otherwise the form resolver closes it.
+/// </remarks>
+public interface IFieldModel
+{
+    /// <param name="form">The form.</param>
+    /// <param name="field">The judged field to suggest.</param>
+    /// <param name="evidence">The values the field may rest on, in the form's order.</param>
+    /// <param name="traceId">The suggestion's id, already opened as a trace: record the call under it, or record nothing.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    Task<FieldModelResult> SuggestAsync(
+        FormDefinition form,
+        string field,
+        IReadOnlyList<KeyValuePair<string, string>> evidence,
+        string traceId,
+        CancellationToken cancellationToken = default);
+}
+
 /// <summary>What happened to a judged field.</summary>
 public enum SettlementKind
 {

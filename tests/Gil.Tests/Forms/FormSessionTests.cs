@@ -147,7 +147,7 @@ public sealed class FormSessionTests
     public async Task A_similar_document_outranks_a_guess_without_evidence_but_not_a_value_backed_by_a_key()
     {
         var sink = new ListSink();
-        var resolver = new FormResolver(new FieldMemory(), new LexicalMemory(), sink);
+        var resolver = new FormResolver(new FieldMemory(), new LexicalMemory(), sink: sink);
         await resolver.RebuildAsync(Ticket, History, Ct);
         var session = resolver.Open(Ticket, "d4");
 
@@ -175,7 +175,7 @@ public sealed class FormSessionTests
     public async Task With_nothing_settled_a_person_decides()
     {
         var sink = new ListSink();
-        var session = new FormResolver(new FieldMemory(), new LexicalMemory(), sink).Open(Ticket, "d1");
+        var session = new FormResolver(new FieldMemory(), new LexicalMemory(), sink: sink).Open(Ticket, "d1");
 
         var suggestions = await session.SuggestAsync(Ct);
 
