@@ -5,6 +5,14 @@ with what to do.
 
 ## Unreleased
 
+### Changed
+
+- **An open document gives a field model its evidence in the order the values arrived.** `IFieldModel.SuggestAsync`
+  receives, from a `FormSession`, the supporting values oldest first, a changed value moving to the end — so the evidence
+  only grows at its end as the document fills, and a model that sends it to an inference server keeps the cached prefix
+  of its previous request. Memory lookups keep the form's order (they match content, whatever order it was entered in),
+  and a stateless `FormResolver.SuggestAsync` has no history, so its model still sees the form's order.
+
 ### Fixed
 
 - **`Gil.IronHive`: a completion no longer fails when an alternative's log-probability is `null`.** llama.cpp sends a

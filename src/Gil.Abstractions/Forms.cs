@@ -232,7 +232,11 @@ public interface IFieldModel
 {
     /// <param name="form">The form.</param>
     /// <param name="field">The judged field to suggest.</param>
-    /// <param name="evidence">The values the field may rest on, in the form's order.</param>
+    /// <param name="evidence">
+    /// The values the field may rest on. From an open document (<c>FormSession</c>) they come in the order they arrived, a
+    /// changed value moving to the end, so the evidence only grows at its end as the document fills; from a stateless
+    /// suggestion, which has no history, in the form's order.
+    /// </param>
     /// <param name="traceId">The suggestion's id, already opened as a trace: record the call under it, or record nothing.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     Task<FieldModelResult> SuggestAsync(

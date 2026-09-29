@@ -95,4 +95,24 @@ public sealed class FieldModelTests
 
         (result.Candidates.Count, result.Confidence, result.Energy).Should().Be((0, (double?)null, 0.0));
     }
+
+    [Fact]
+    public async Task An_open_document_gives_the_model_its_evidence_in_arrival_order_and_a_changed_value_moves_to_the_end()
+    {
+        var model = new FixedModel("security", 0.8);
+        var resolver = new FormResolver(new FieldMemory(), model: model);
+        var session = resolver.Open(Ticket, "d1");
+
+        await session.ObserveAsync("summary", "door will not open", Ct);
+        await session.ObserveAsync("component", "badge reader", Ct);
+        await session.ObserveAsync("summary", "door opens late", Ct);
+
+        model.Asked.Select(e => string.Join(",", e.Select(v => v.Key))).Should().Equal("summary", "summary,component", "component,summary");
+        model.Asked[^1][^1].Value.Should().Be("door opens late");
+
+        // A stateless suggestion has no history: the form's order.
+        model.Asked.Clear();
+        await resolver.SuggestAsync(Ticket, "d2", new Dictionary<string, string> { ["summary"] = "x", ["component"] = "y" }, Ct);
+        model.Asked.Single().Select(v => v.Key).Should().Equal("component", "summary");
+    }
 }

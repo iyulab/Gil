@@ -134,10 +134,17 @@ public sealed class FormResolver
     /// One field's suggestion. Layers that answer come first — values under a key strong enough
     /// (<see cref="FieldDefinition.KeyThreshold"/>), a document similar enough (<see cref="FieldDefinition.MemoryThreshold"/>),
     /// and a model where neither memory had anything — then guesses: the nearest document below the threshold, values
-    /// under weaker keys, the field's most frequent values.
+    /// under weaker keys, the field's most frequent values. <c>arrival</c> is the order the document's values arrived in,
+    /// oldest first — the order a model sees its evidence in; null when the caller has no history (a stateless
+    /// suggestion), and the form's order then.
     /// </summary>
     internal async Task<FieldSuggestion> SuggestFieldAsync(
-        FormDefinition form, string documentId, IReadOnlyDictionary<string, string> values, FieldDefinition field, CancellationToken cancellationToken)
+        FormDefinition form,
+        string documentId,
+        IReadOnlyDictionary<string, string> values,
+        FieldDefinition field,
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? arrival = null)
     {
         var started = Stopwatch.GetTimestamp();
         var traceId = Guid.NewGuid().ToString("N");
@@ -155,7 +162,8 @@ public sealed class FormResolver
         FieldModelResult? modelled = null;
         if (Model is IFieldModel model && keyed.Count == 0 && !similar.Any(c => c.Trusted))
         {
-            modelled = await model.SuggestAsync(form, field.Name, evidence, traceId, cancellationToken).ConfigureAwait(false);
+            var ordered = arrival is null ? evidence : InArrivalOrder(evidence, arrival);
+            modelled = await model.SuggestAsync(form, field.Name, ordered, traceId, cancellationToken).ConfigureAwait(false);
             energy += modelled.Energy;
         }
 
@@ -388,6 +396,22 @@ public sealed class FormResolver
         [.. form.Fields
             .Where(f => form.Supports(f.Name, field) && values.ContainsKey(f.Name))
             .Select(f => KeyValuePair.Create(f.Name, values[f.Name]))];
+
+    /// <summary>
+    /// Evidence re-ordered to the order its values arrived in. Memory lookups keep the form's order — they match content, and
+    /// the same values must find the same documents whatever order they were entered in — but a model reads its evidence as
+    /// a history, and a history that only grows at the end keeps an inference server's cached prefix valid.
+    /// </summary>
+    internal static List<KeyValuePair<string, string>> InArrivalOrder(IReadOnlyList<KeyValuePair<string, string>> evidence, IReadOnlyList<string> arrival)
+    {
+        var rank = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < arrival.Count; i++)
+        {
+            rank[arrival[i]] = i;
+        }
+
+        return [.. evidence.OrderBy(e => rank.TryGetValue(e.Key, out var r) ? r : int.MaxValue)];
+    }
 
     /// <summary>The <c>name: value</c> lines of the fields that support <paramref name="field"/>, in the form's order.</summary>
     internal static string Evidence(FormDefinition form, string field, IReadOnlyDictionary<string, string> values) =>

@@ -16,6 +16,7 @@ public sealed class FormSession
     private readonly FormResolver _resolver;
     private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
     private readonly HashSet<string> _rejected = new(StringComparer.Ordinal);
+    private readonly List<string> _arrival = []; // fields with a value, in the order their current values arrived
     private DateTimeOffset _settledAt;
 
     internal FormSession(FormResolver resolver, FormDefinition form, string documentId, DateTimeOffset settledAt) =>
@@ -96,6 +97,7 @@ public sealed class FormSession
 
     private void Set(string field, string? value)
     {
+        _arrival.Remove(field);
         if (value is null)
         {
             _values.Remove(field);
@@ -103,6 +105,7 @@ public sealed class FormSession
         else
         {
             _values[field] = value;
+            _arrival.Add(field); // a changed value is new history: it moves to the end
         }
     }
 
@@ -128,5 +131,5 @@ public sealed class FormSession
         && !_rejected.Contains(field.Name);
 
     private Task<FieldSuggestion> SuggestAsync(FieldDefinition field, CancellationToken cancellationToken) =>
-        _resolver.SuggestFieldAsync(Form, DocumentId, _values, field, cancellationToken);
+        _resolver.SuggestFieldAsync(Form, DocumentId, _values, field, cancellationToken, _arrival);
 }
