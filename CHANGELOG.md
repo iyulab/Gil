@@ -3,6 +3,14 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Fixed
+
+- **`Gil.IronHive`: a completion no longer fails when an alternative's log-probability is `null`.** llama.cpp sends a
+  zero-probability alternative's logprob as `null` (JSON has no −∞); the OpenAI-compatible provider threw on it and the
+  whole completion was lost. It now reads as zero probability. Requires `IronHive.Providers.OpenAI.Compatible` 0.45.1.
+
 ## 0.5.0
 
 ### Breaking

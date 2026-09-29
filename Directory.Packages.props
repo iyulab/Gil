@@ -6,7 +6,7 @@
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
   </ItemGroup>
   <ItemGroup Label="Models">
-    <PackageVersion Include="IronHive.Providers.OpenAI.Compatible" Version="0.45.0" />
+    <PackageVersion Include="IronHive.Providers.OpenAI.Compatible" Version="0.45.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
   </ItemGroup>
