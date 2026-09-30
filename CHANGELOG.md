@@ -15,6 +15,12 @@ with what to do.
   **What to do**: read the threshold from `Chosen` — `layers.Key.Chosen?.Threshold`,
   `(await ThresholdSelection.SelectAsync(…)).Chosen` — where you read the choice itself before.
 
+### Changed
+
+- **Forgetting a `LexicalMemory` row takes constant time** instead of renumbering every row after it — a case replaced
+  by a newer document, as the form resolver and `ThresholdSelection` do on every settlement, no longer costs a pass over
+  memory. Results are unchanged: ties still go to the answer remembered first.
+
 ## 0.6.0
 
 ### Breaking
