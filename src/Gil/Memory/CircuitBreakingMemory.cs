@@ -25,12 +25,25 @@ public sealed class CircuitBreakingMemory(IMemory inner, TimeSpan cooldown, Time
     private (DateTimeOffset Until, Exception Cause)? _open;
     private bool _trialRunning;
 
-    public async Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default)
+    public Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _inner.LookupAsync(task, state, traceId, cancellationToken), cancellationToken);
+
+    public Task<(IReadOnlyList<MemoryMatch> Matches, double Energy)> NearestAsync(string task, string state, int count, string traceId, CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _inner.NearestAsync(task, state, count, traceId, cancellationToken), cancellationToken);
+
+    public Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default) =>
+        GuardAsync(() => _inner.RememberAsync(task, key, state, answer, traceId, cancellationToken), cancellationToken);
+
+    /// <summary>Passed through: forgetting a wrong answer is never refused.</summary>
+    public void Forget(string task, string key) => _inner.Forget(task, key);
+
+    /// <summary>Calls the inner memory through the circuit: refused while it is open, and a failure opens it.</summary>
+    private async Task<T> GuardAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)
     {
         var trial = Enter();
         try
         {
-            var result = await _inner.LookupAsync(task, state, traceId, cancellationToken).ConfigureAwait(false);
+            var result = await call().ConfigureAwait(false);
             Succeeded();
             return result;
         }
@@ -44,29 +57,6 @@ public sealed class CircuitBreakingMemory(IMemory inner, TimeSpan cooldown, Time
             EndTrial(trial);
         }
     }
-
-    public async Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
-    {
-        var trial = Enter();
-        try
-        {
-            var energy = await _inner.RememberAsync(task, key, state, answer, traceId, cancellationToken).ConfigureAwait(false);
-            Succeeded();
-            return energy;
-        }
-        catch (Exception error) when (!(error is OperationCanceledException && cancellationToken.IsCancellationRequested))
-        {
-            Failed(error);
-            throw;
-        }
-        finally
-        {
-            EndTrial(trial);
-        }
-    }
-
-    /// <summary>Passed through: forgetting a wrong answer is never refused.</summary>
-    public void Forget(string task, string key) => _inner.Forget(task, key);
 
     /// <summary>Lets the call through, or throws while the circuit is open. True when the call is the trial.</summary>
     private bool Enter()

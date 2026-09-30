@@ -62,6 +62,12 @@ public sealed class LexicalMemory : IMemory
         return [.. index.Top(Grams(state), count).Select(m => new MemoryMatch(m.Key, m.Similarity, m.Answer))];
     }
 
+    public Task<(IReadOnlyList<MemoryMatch> Matches, double Energy)> NearestAsync(string task, string state, int count, string traceId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<(IReadOnlyList<MemoryMatch>, double)>((Nearest(task, state, count), 0));
+    }
+
     public Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

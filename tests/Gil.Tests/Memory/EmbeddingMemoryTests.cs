@@ -56,6 +56,26 @@ public sealed class EmbeddingMemoryTests
     }
 
     [Fact]
+    public async Task Asking_for_the_nearest_few_ranks_them_and_remembering_reuses_the_vector()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var model = new Vectors(Refund, Other, RefundNear);
+        var memory = new EmbeddingMemory(new EmbeddingRecorder(model, new EnergyModel(1, 0, 0, 0)));
+        foreach (var (key, answer) in new[] { ("t1", "refund policy"), ("t2", "shipping") })
+        {
+            await memory.LookupAsync("task", key, key, ct);
+            await memory.RememberAsync("task", key, key, answer, key, ct);
+        }
+
+        var (matches, cost) = await memory.NearestAsync("task", "can I get a refund", 5, "t3", ct);
+        await memory.RememberAsync("task", "t3", "can I get a refund", "refund policy", "t3", ct);
+
+        matches.Select(m => (m.Source, m.Answer)).Should().Equal(("t1", "refund policy"), ("t2", "shipping"));
+        matches[0].Similarity.Should().BeApproximately(0.95, 0.01);
+        (cost, model.Calls).Should().Be((1.0, 3)); // one embedding per request, none for remembering
+    }
+
+    [Fact]
     public async Task Forgetting_removes_the_answer_and_other_tasks_are_separate()
     {
         var memory = new EmbeddingMemory(new EmbeddingRecorder(new Vectors(Refund), new EnergyModel(0, 0, 0, 0)));

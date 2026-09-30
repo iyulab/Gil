@@ -121,6 +121,24 @@ public interface IMemory
     /// <param name="cancellationToken">Cancels the call.</param>
     Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The <paramref name="count"/> nearest remembered requests, nearest first (empty when memory is empty), and the energy
+    /// the lookup cost — one lookup, so its first match is the one <see cref="LookupAsync"/> returns and it keeps what it
+    /// computed for a later <see cref="RememberAsync"/> the same way. This default ranks only the nearest; a memory that
+    /// can rank more overrides it.
+    /// </summary>
+    /// <param name="task">The task whose memory to search.</param>
+    /// <param name="state">The request as it arrived.</param>
+    /// <param name="count">At most this many; fewer when memory holds fewer.</param>
+    /// <param name="traceId">The request being looked up, as for <see cref="LookupAsync"/>.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    async Task<(IReadOnlyList<MemoryMatch> Matches, double Energy)> NearestAsync(string task, string state, int count, string traceId, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        var (match, energy) = await LookupAsync(task, state, traceId, cancellationToken).ConfigureAwait(false);
+        return (match is null ? [] : [match], energy);
+    }
+
     /// <summary>Adds a confirmed answer; returns the energy it cost.</summary>
     /// <param name="task">The task whose memory holds it.</param>
     /// <param name="key">The request the answer belongs to — its trace id, which a lookup reports as the match's

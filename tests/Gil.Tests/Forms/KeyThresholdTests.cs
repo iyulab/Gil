@@ -303,6 +303,65 @@ public sealed class KeyThresholdTests
     }
 
     [Fact]
+    public async Task A_suggestion_reports_the_similar_documents_its_candidate_rests_on()
+    {
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("summary", FieldRole.Observed),
+                new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.3 },
+            ],
+            PromptLanguage.English);
+        SettledDocument Doc(int i, string summary, string team) =>
+            new($"d{i}", new Dictionary<string, string> { ["summary"] = summary, ["team"] = team }, DateTimeOffset.UnixEpoch.AddMinutes(i));
+        var history = new[]
+        {
+            Doc(1, "printer on floor 3 is jammed", "facilities"),
+            Doc(2, "printer on floor 4 is jammed again", "hardware"),
+            Doc(3, "vpn drops every ten minutes", "network"),
+            Doc(4, "the printer on floor 5 is jammed", "facilities"),
+        };
+        var asked = new Dictionary<string, string> { ["summary"] = "printer on floor 2 is jammed" };
+
+        var plain = new FormResolver(new FieldMemory(), new LexicalMemory());
+        await plain.RebuildAsync(form, history, Ct);
+        (await plain.SuggestAsync(form, "d9", asked, Ct)).Single().SimilarDocuments.Should().BeEmpty(); // not asked for
+
+        var resolver = new FormResolver(new FieldMemory(), new LexicalMemory(), similarDocumentCount: 3);
+        await resolver.RebuildAsync(form, history, Ct);
+        var team = (await resolver.SuggestAsync(form, "d9", asked, Ct)).Single();
+
+        team.SimilarDocuments.Should().HaveCount(3);
+        team.SimilarDocuments[0].Source.Should().Be(team.Candidates[0].Evidence); // the candidate's own document first
+        team.SimilarDocuments.Select(m => m.Similarity).Should().BeInDescendingOrder();
+        team.SimilarDocuments.Select(m => m.Answer).Should().Contain("hardware"); // the neighbours need not agree
+    }
+
+    [Fact]
+    public async Task A_saved_document_is_passed_over_for_the_next_similar_one()
+    {
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("summary", FieldRole.Observed),
+                new FieldDefinition("team", FieldRole.Judged) { MemoryThreshold = 0.5 },
+            ],
+            PromptLanguage.English);
+        var resolver = new FormResolver(new FieldMemory(), new LexicalMemory(), similarDocumentCount: 2);
+        await resolver.RebuildAsync(form,
+        [
+            new SettledDocument("d1", new Dictionary<string, string> { ["summary"] = "printer on floor 3 is jammed", ["team"] = "facilities" }, DateTimeOffset.UnixEpoch.AddMinutes(1)),
+            new SettledDocument("d2", new Dictionary<string, string> { ["summary"] = "printer on floor 4 is jammed", ["team"] = "facilities" }, DateTimeOffset.UnixEpoch.AddMinutes(2)),
+        ], Ct);
+
+        // Editing d1: its own saved version is the most similar document, and is passed over.
+        var team = (await resolver.SuggestAsync(form, "d1", new Dictionary<string, string> { ["summary"] = "printer on floor 3 is jammed" }, Ct)).Single();
+
+        (team.Answered, team.Source, team.Candidates[0].Evidence).Should().Be((true, FieldSource.SimilarDocument, "d2"));
+        team.SimilarDocuments.Select(m => m.Source).Should().Equal("d2");
+    }
+
+    [Fact]
     public async Task Suggesting_from_values_writes_nothing_and_a_saved_document_is_not_its_own_evidence()
     {
         var form = new FormDefinition(

@@ -41,18 +41,25 @@ public sealed class FormResolver
     /// </param>
     /// <param name="candidateCount">How many candidates a suggestion offers at most.</param>
     /// <param name="timeProvider">The clock a session's settlements are timed by; the system clock when null.</param>
+    /// <param name="similarDocumentCount">
+    /// How many of the most similar settled documents a suggestion reports as <see cref="FieldSuggestion.SimilarDocuments"/>
+    /// — the evidence behind its candidate from a similar document. None by default. They come from the same lookup, so
+    /// asking for them costs no second call; a document memory that ranks only its nearest reports that one.
+    /// </param>
     public FormResolver(
         FieldMemory fieldMemory,
         IMemory? documentMemory = null,
         IFieldModel? model = null,
         ITelemetrySink? sink = null,
         int candidateCount = 3,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        int similarDocumentCount = 0)
     {
         ArgumentNullException.ThrowIfNull(fieldMemory);
         ArgumentOutOfRangeException.ThrowIfLessThan(candidateCount, 1);
-        (FieldMemory, DocumentMemory, Model, Sink, CandidateCount, Time) =
-            (fieldMemory, documentMemory, model, sink, candidateCount, timeProvider ?? TimeProvider.System);
+        ArgumentOutOfRangeException.ThrowIfNegative(similarDocumentCount);
+        (FieldMemory, DocumentMemory, Model, Sink, CandidateCount, Time, SimilarDocumentCount) =
+            (fieldMemory, documentMemory, model, sink, candidateCount, timeProvider ?? TimeProvider.System, similarDocumentCount);
     }
 
     internal FieldMemory FieldMemory { get; }
@@ -66,6 +73,8 @@ public sealed class FormResolver
     internal int CandidateCount { get; }
 
     internal TimeProvider Time { get; }
+
+    internal int SimilarDocumentCount { get; }
 
     /// <summary>
     /// Opens a document of the form. Put back a saved document's values with <see cref="FormSession.ObserveAsync"/> and
@@ -106,7 +115,7 @@ public sealed class FormResolver
     /// writing nothing to memory. For applications where saving is settling: ask with the values on screen, and put the
     /// document with <see cref="RebuildAsync"/> once it is saved. The saved version of <paramref name="documentId"/>, if
     /// memory holds one, is not evidence for itself: its settlements are left out of the field memory, and a similar
-    /// document lookup that finds it counts as a miss.
+    /// document lookup that finds it passes it over for the next most similar document.
     /// </summary>
     /// <param name="form">The form.</param>
     /// <param name="documentId">The document asked about; opaque, as in <see cref="Open"/>.</param>
@@ -155,7 +164,7 @@ public sealed class FormResolver
 
         var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId);
         var keyed = remembered.Where(c => c.Evidence is not null).ToList();
-        var (similar, recall, energy) = await SimilarAsync(field, documentId, task, lines, traceId, cancellationToken).ConfigureAwait(false);
+        var (similar, neighbours, recall, energy) = await SimilarAsync(field, documentId, task, lines, traceId, cancellationToken).ConfigureAwait(false);
 
         // A model only where neither memory had evidence: a value backed by what the document says — even by a key too
         // weak to answer — beats a model's guess.
@@ -193,34 +202,41 @@ public sealed class FormResolver
             });
         }
 
-        return new FieldSuggestion(field.Name, candidates, source, field.Policy, confidence, Stopwatch.GetElapsedTime(started), energy, traceId);
+        return new FieldSuggestion(field.Name, candidates, source, field.Policy, confidence, Stopwatch.GetElapsedTime(started), energy, traceId)
+        {
+            SimilarDocuments = neighbours,
+        };
     }
 
-    /// <summary>The nearest similar settled document's value — trusted when similar enough — and what the lookup found.</summary>
-    private async Task<(IReadOnlyList<FieldCandidate> Candidates, Recall? Recall, double Energy)> SimilarAsync(
+    /// <summary>
+    /// The most similar settled document's value — trusted when similar enough — the documents behind it, and what the
+    /// lookup found. The document itself is never its own evidence: one more is asked for, and it is passed over.
+    /// </summary>
+    private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
         FieldDefinition field, string documentId, string task, string evidence, string traceId, CancellationToken cancellationToken)
     {
         if (DocumentMemory is not IMemory memory || field.MemoryThreshold is not double threshold || evidence.Length == 0)
         {
-            return ([], null, 0);
+            return ([], [], null, 0);
         }
 
         try
         {
-            var (match, energy) = await memory.LookupAsync(task, evidence, traceId, cancellationToken).ConfigureAwait(false);
-            // The document itself is never its own evidence.
-            if (match is null || match.Source == documentId)
+            var (found, energy) = await memory.NearestAsync(task, evidence, Math.Max(SimilarDocumentCount, 1) + 1, traceId, cancellationToken).ConfigureAwait(false);
+            var others = found.Where(m => m.Source != documentId).ToList();
+            if (others.Count == 0)
             {
-                return ([], null, energy);
+                return ([], [], null, energy);
             }
 
+            var match = others[0];
             var hit = match.Similarity >= threshold;
             var recall = new Recall(match.Source, match.Similarity, threshold, hit);
-            return ([new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)], recall, energy);
+            return ([new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)], [.. others.Take(SimilarDocumentCount)], recall, energy);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            return ([], Recall.Failed(threshold, error), 0);
+            return ([], [], Recall.Failed(threshold, error), 0);
         }
     }
 

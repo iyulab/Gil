@@ -22,6 +22,21 @@ public sealed class CircuitBreakingMemoryTests
     }
 
     [Fact]
+    public async Task Asking_for_the_nearest_few_goes_through_the_same_circuit()
+    {
+        var inner = new FlakyMemory();
+        var memory = new CircuitBreakingMemory(inner, TimeSpan.FromSeconds(30), new ManualClock());
+        var nearest = () => memory.NearestAsync("task", "s", 3, "t", TestContext.Current.CancellationToken);
+
+        (await nearest()).Matches.Select(m => m.Source).Should().Equal("seed"); // a memory that ranks only its nearest
+        inner.Failure = new HttpRequestException("refused");
+        await nearest.Should().ThrowAsync<HttpRequestException>();
+        await Lookup(memory).Should().ThrowAsync<MemoryUnavailableException>();
+
+        inner.Calls.Should().Be(2);
+    }
+
+    [Fact]
     public async Task The_first_call_after_the_cooldown_is_a_trial_that_closes_the_circuit_when_it_succeeds()
     {
         var inner = new FlakyMemory { Failure = new HttpRequestException("refused") };

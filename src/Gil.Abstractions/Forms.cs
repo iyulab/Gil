@@ -211,6 +211,15 @@ public sealed record FieldSuggestion(
     /// field is left to a person, and its trace records an abstention.
     /// </summary>
     public bool Answered => Candidates.Count > 0 && Candidates[0].Trusted;
+
+    /// <summary>
+    /// The settled documents most similar to this one, most similar first — the evidence behind the candidate from a
+    /// similar document, so a person can see what it rests on and whether its neighbours agree. The first is that
+    /// candidate's document. Empty unless the resolver was asked for them, the field sets
+    /// <see cref="FieldDefinition.MemoryThreshold"/> and the document memory found a document; the document itself is never
+    /// among them. Memory keeps one document per case, so each is a different case.
+    /// </summary>
+    public IReadOnlyList<MemoryMatch> SimilarDocuments { get; init; } = [];
 }
 
 /// <summary>What a model suggested for one field.</summary>

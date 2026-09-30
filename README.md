@@ -315,6 +315,12 @@ as a suggestion. A key's strength is how pure it is for the value, discounted wh
 choice among a handful of values that every document has rarely decides another field, and without `KeyThreshold` its
 values are guesses, so it never outranks a similar document.
 
+To show what a similar document's candidate rests on, create the resolver with `similarDocumentCount`: each suggestion
+then carries `SimilarDocuments`, the most similar settled documents with their similarity and settled value, the
+candidate's own document first. They come from the same lookup, so a person sees the evidence the suggestion was made
+from — and whether the neighbours agree — at no extra cost. A document being edited is never among them: the saved
+version of it is passed over for the next most similar document.
+
 On a machine without a large model, leave the model out: measured on requests a lexical memory did not answer on its
 own, small local models (2B and 4B, quantised) were right less often than that memory's nearest document, and took
 seconds per field on an office laptop.

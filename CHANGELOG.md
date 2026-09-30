@@ -14,6 +14,19 @@ with what to do.
   than the similar document layer then delivered on the documents that followed. Replaying a public stream of about
   10,000 settled documents, answers from a similar document were right 66–75% of the time under a threshold chosen for
   80%. `SelectAsync` on its own remains right for a field without a `KeyThreshold`.
+- **`FieldSuggestion.SimilarDocuments`** — the most similar settled documents behind a suggestion's candidate from a
+  similar document (document id, similarity, settled value), when the `FormResolver` is created with
+  `similarDocumentCount`. They come from the lookup that made the candidate.
+- **`IMemory.NearestAsync(task, state, count, traceId)`** ranks the nearest few remembered requests in one lookup.
+  `LexicalMemory`, `EmbeddingMemory` and `CircuitBreakingMemory` implement it; the default, for other memories, returns
+  only the nearest.
+
+### Fixed
+
+- **Editing a saved document no longer loses the similar document layer.** The saved version of the document was its
+  own nearest document, and the lookup counted it as a miss, so the layer suggested nothing even when other documents
+  were close. It is now passed over for the next most similar document, as the field memory already left the document's
+  own settlements out.
 
 ## 0.5.2
 

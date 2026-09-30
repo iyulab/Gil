@@ -34,6 +34,20 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
         return (new MemoryMatch(key, similarity, answer), call.Energy);
     }
 
+    public async Task<(IReadOnlyList<MemoryMatch> Matches, double Energy)> NearestAsync(string task, string state, int count, string traceId, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        var (vectors, call) = await embedder.EmbedAsync([state], traceId, cancellationToken).ConfigureAwait(false);
+        var query = Unit(vectors[0]);
+        Keep(traceId, query);
+        if (!_indexes.TryGetValue(task, out var index) || index.Count == 0)
+        {
+            return ([], call.Energy);
+        }
+
+        return ([.. index.Top(query, count).Select(m => new MemoryMatch(m.Key, m.Similarity, m.Answer))], call.Energy);
+    }
+
     public async Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
     {
         // The vector its lookup computed, when the request went through this memory.
@@ -169,6 +183,26 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
             {
                 _position[_keys[i]] = i;
             }
+        }
+
+        /// <summary>The <paramref name="count"/> most similar rows, most similar first; on a tie, the one remembered first.</summary>
+        public IEnumerable<(string Key, double Similarity, string Answer)> Top(float[] query, int count) =>
+            Enumerable.Range(0, _vectors.Count)
+                .Select(i => (Row: i, Similarity: Dot(_vectors[i], query)))
+                .OrderByDescending(r => r.Similarity)
+                .ThenBy(r => r.Row) // stable: the one remembered first
+                .Take(count)
+                .Select(r => (_keys[r.Row], r.Similarity, _answers[r.Row]));
+
+        private static double Dot(float[] row, float[] query)
+        {
+            var similarity = 0.0;
+            for (var d = 0; d < row.Length; d++)
+            {
+                similarity += row[d] * query[d];
+            }
+
+            return similarity;
         }
 
         /// <summary>The most similar row; on a tie, the one remembered first (rows stay in the order they were remembered).</summary>
