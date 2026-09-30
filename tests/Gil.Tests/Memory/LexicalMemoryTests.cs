@@ -110,6 +110,26 @@ public sealed class LexicalMemoryTests
     }
 
     [Fact]
+    public async Task Forgetting_a_row_keeps_the_remembered_order_of_the_rest_for_ties()
+    {
+        var memory = new LexicalMemory();
+        foreach (var key in new[] { "a", "b", "c", "d" })
+        {
+            await memory.RememberAsync("task", key, "same words", key, key, Ct);
+        }
+
+        memory.Forget("task", "b"); // the last row takes its place
+        memory.Forget("task", "a");
+        var (tie, _) = await memory.LookupAsync("task", "same words", "q1", Ct);
+        await memory.RememberAsync("task", "c", "same words", "c again", "c", Ct); // keeps its place in the order
+        await memory.RememberAsync("task", "a", "same words", "a again", "a", Ct); // remembered anew: last
+        var ranked = memory.Nearest("task", "same words", 3);
+
+        tie!.Source.Should().Be("c");
+        ranked.Select(m => (m.Source, m.Answer)).Should().Equal(("c", "c again"), ("d", "d"), ("a", "a again"));
+    }
+
+    [Fact]
     public async Task Forgetting_removes_the_answer_and_other_tasks_are_separate()
     {
         var memory = new LexicalMemory();

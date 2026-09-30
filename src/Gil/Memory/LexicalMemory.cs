@@ -122,12 +122,15 @@ public sealed class LexicalMemory : IMemory
     }
 
     /// <summary>
-    /// Rows kept in the order they were remembered; ties go to the earlier row. Each distinct n-gram gets an id once, and a
-    /// row holds its ids sorted with their counts and weights, so a lookup compares two sorted lists instead of hashing.
+    /// Rows in no particular order, each numbered in the order it was remembered — a key remembered again keeps its number —
+    /// and ties go to the smaller number, so forgetting a row moves the last one into its place instead of shifting the
+    /// rest. Each distinct n-gram gets an id once, and a row holds its ids sorted with their counts and weights, so a lookup
+    /// compares two sorted lists instead of hashing.
     /// </summary>
     private sealed class Index
     {
         private readonly List<Row> _rows = [];
+        private long _remembered;
         private readonly Dictionary<string, int> _position = [];
         private readonly Dictionary<string, int> _ids = new(StringComparer.Ordinal);
         private readonly List<int> _frequency = [];
@@ -141,9 +144,10 @@ public sealed class LexicalMemory : IMemory
         public void Put(string key, Dictionary<string, int> grams, string answer)
         {
             var (ids, counts) = Intern(grams);
-            var row = new Row(key, answer, ids, counts, new double[ids.Length]);
+            var existing = _position.TryGetValue(key, out var at);
+            var row = new Row(key, answer, existing ? _rows[at].Order : _remembered++, ids, counts, new double[ids.Length]);
             row.Norm = Weigh(ids, counts, row.Weights);
-            if (_position.TryGetValue(key, out var at))
+            if (existing)
             {
                 Tally(_rows[at].Ids, -1);
                 _rows[at] = row;
@@ -166,10 +170,12 @@ public sealed class LexicalMemory : IMemory
             }
 
             Tally(_rows[at].Ids, -1);
-            _rows.RemoveAt(at);
-            for (var i = at; i < _rows.Count; i++)
+            var last = _rows[^1];
+            _rows.RemoveAt(_rows.Count - 1);
+            if (at < _rows.Count)
             {
-                _position[_rows[i].Key] = i;
+                _rows[at] = last;
+                _position[last.Key] = at;
             }
 
             Refresh();
@@ -182,7 +188,7 @@ public sealed class LexicalMemory : IMemory
             var best = 0;
             for (var r = 1; r < similarities.Length; r++)
             {
-                if (similarities[r] > similarities[best])
+                if (similarities[r] > similarities[best] || (similarities[r] == similarities[best] && _rows[r].Order < _rows[best].Order))
                 {
                     best = r;
                 }
@@ -191,17 +197,18 @@ public sealed class LexicalMemory : IMemory
             return (_rows[best].Key, similarities[best], _rows[best].Answer);
         }
 
-        /// <summary>The <paramref name="count"/> most similar rows, most similar first; ties keep remembered order.</summary>
+        /// <summary>The <paramref name="count"/> most similar rows, most similar first; ties in remembered order.</summary>
         public IEnumerable<(string Key, double Similarity, string Answer)> Top(Dictionary<string, int> query, int count)
         {
             var similarities = Similarities(query);
             return Enumerable.Range(0, similarities.Length)
                 .OrderByDescending(r => similarities[r])
+                .ThenBy(r => _rows[r].Order)
                 .Take(count)
                 .Select(r => (_rows[r].Key, similarities[r], _rows[r].Answer));
         }
 
-        /// <summary>The cosine of the query with every row, in remembered order.</summary>
+        /// <summary>The cosine of the query with every row, in the rows' order.</summary>
         private double[] Similarities(Dictionary<string, int> query)
         {
             // An n-gram no row has ever held matches nothing, but it still weighs in the query's norm.
@@ -315,11 +322,14 @@ public sealed class LexicalMemory : IMemory
             }
         }
 
-        private sealed class Row(string key, string answer, int[] ids, int[] counts, double[] weights)
+        private sealed class Row(string key, string answer, long order, int[] ids, int[] counts, double[] weights)
         {
             public string Key { get; } = key;
 
             public string Answer { get; } = answer;
+
+            /// <summary>When the key was first remembered, among the rows of this index; breaks ties.</summary>
+            public long Order { get; } = order;
 
             public int[] Ids { get; } = ids;
 
