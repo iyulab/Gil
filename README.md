@@ -266,6 +266,10 @@ from settled documents only: which values were settled alongside which values of
 which settled document is most similar.
 
 ```csharp
+using Gil;
+using Gil.Forms;
+using Gil.Memory;
+
 var form = new FormDefinition("ticket",
 [
     new FieldDefinition("reporter", FieldRole.Observed) { UseAsEvidence = false },
