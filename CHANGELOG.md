@@ -3,6 +3,19 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## 0.5.2
+
+### Fixed
+
+- **`ThresholdSelection` no longer admits a band of answers whose own precision falls short of the target.** It
+  chose the lowest score at which the answers above it, taken together, met the target — so many good answers high up
+  could carry a band of weak ones below them. A form whose settled documents repeat one another was hit hardest: the
+  repeats answered each other correctly by their own keys, and a key backing its value about one time in four then
+  cleared `KeyThreshold` and answered. Precision is now fitted as a non-decreasing function of the score (isotonic
+  regression), and the threshold is the lowest score down to which every band meets the target. Both
+  `SelectAsync` and `SelectKeyThreshold` choose this way; thresholds may come out higher, answering less but as often
+  right as asked. Choose thresholds again after upgrading.
+
 ## 0.5.1
 
 ### Changed

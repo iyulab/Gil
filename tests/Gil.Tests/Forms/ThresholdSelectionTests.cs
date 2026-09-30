@@ -70,7 +70,7 @@ public sealed class ThresholdSelectionTests
     public async Task The_lowest_threshold_that_still_meets_the_target_is_chosen()
     {
         // Similarities and whether the nearest answer matched: 0.9 ✓, 0.8 ✓, 0.7 ✗, 0.6 ✓, 0.5 ✗
-        // Precision from the top: 1, 1, 2/3, 3/4, 3/5.
+        // Precision fitted as non-decreasing in similarity: [0.8, 0.9] 1, [0.6, 0.7] 1/2 (0.6 alone would outdo 0.7), 0.5 0.
         var memory = new ScriptedMemory((0.9, "a"), (0.8, "a"), (0.7, "b"), (0.6, "a"), (0.5, "b"));
         var documents = Enumerable.Range(0, 6).Select(i => Doc($"d{i}", $"s{i}", "a"));
 
@@ -78,7 +78,10 @@ public sealed class ThresholdSelectionTests
         var loose = await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "a"), (0.8, "a"), (0.7, "b"), (0.6, "a"), (0.5, "b")), Ticket, "team", documents, 0.75, minimumAnswered: 1, Ct);
 
         strict.Should().Be(new ThresholdChoice(0.8, 1.0, 0.4, 2, 5));
-        loose.Should().Be(new ThresholdChoice(0.6, 0.75, 0.8, 4, 5)); // 0.7 alone falls short, 0.6 recovers
+        // Together from 0.6 up the answers reach 3/4, but the band at 0.6–0.7 is right only half the time.
+        loose.Should().Be(new ThresholdChoice(0.8, 1.0, 0.4, 2, 5));
+        var lower = await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "a"), (0.8, "a"), (0.7, "b"), (0.6, "a"), (0.5, "b")), Ticket, "team", documents, 0.5, minimumAnswered: 1, Ct);
+        lower.Should().Be(new ThresholdChoice(0.6, 0.75, 0.8, 4, 5));
     }
 
     [Fact]

@@ -130,6 +130,54 @@ public sealed class KeyThresholdTests
     }
 
     [Fact]
+    public void A_weak_key_is_not_trusted_because_duplicates_of_other_documents_answer_well()
+    {
+        // Twenty request texts, each filed ten times with the same team; the source is unrelated to the team. Once a
+        // text has been seen, its own key answers every repeat correctly. A text seen for the first time has only its
+        // source as a known key, whose most frequent team is right about one time in four — those answers must not
+        // ride on the repeats' precision.
+        var random = new Random(11);
+        string[] sources = ["email", "phone", "chat", "portal"];
+        string[] teams = ["network", "facilities", "accounts", "hardware", "software"];
+        var texts = Enumerable.Range(0, 20).Select(t => (Text: $"request template {t}", Team: teams[t % teams.Length])).ToList();
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("request", FieldRole.Observed),
+                new FieldDefinition("source", FieldRole.Observed) { Candidates = sources },
+                new FieldDefinition("team", FieldRole.Judged),
+            ],
+            PromptLanguage.English);
+        var history = texts
+            .SelectMany(t => Enumerable.Repeat(t, 10))
+            .OrderBy(_ => random.Next())
+            .Select((t, i) => new SettledDocument(
+                $"t{i + 1}",
+                new Dictionary<string, string> { ["request"] = t.Text, ["source"] = sources[random.Next(sources.Length)], ["team"] = t.Team },
+                DateTimeOffset.UnixEpoch.AddMinutes(i + 1)))
+            .ToList();
+
+        var choice = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.9, 10);
+
+        choice.Should().NotBeNull(); // repeats still answer
+        var keyed = new FormDefinition("ticket", [.. form.Fields.Select(f => f.Name == "team" ? f with { KeyThreshold = choice!.Threshold } : f)], form.Language);
+        var fields = new FieldMemory();
+        foreach (var document in history)
+        {
+            fields.Put(keyed, document);
+        }
+
+        foreach (var source in sources)
+        {
+            var weak = fields.Rank(keyed, "team", new Dictionary<string, string> { ["request"] = "a request never seen", ["source"] = source }, 1)[0];
+            weak.Trusted.Should().BeFalse($"the source '{source}' alone backs {weak.Value} about one time in four (threshold {choice!.Threshold})");
+        }
+
+        var repeat = fields.Rank(keyed, "team", new Dictionary<string, string> { ["request"] = "request template 3", ["source"] = "phone" }, 1)[0];
+        (repeat.Value, repeat.Trusted).Should().Be(("hardware", true));
+    }
+
+    [Fact]
     public async Task A_key_below_the_threshold_is_a_guess_and_still_keeps_the_model_out()
     {
         var form = new FormDefinition(
