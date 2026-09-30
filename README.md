@@ -310,8 +310,12 @@ Each field is tried in a fixed order, and `FieldSuggestion.Source` says which la
 A layer answers only at or above its threshold. What falls short is still offered, after the layers that answered, as
 a guess: the nearest document below `MemoryThreshold`, values under a key below `KeyThreshold`, then the values settled
 most often for the field. `FieldCandidate.Trusted` marks which is which, and `FieldSuggestion.Answered` says whether
-the first candidate is an answer at all — when it is not, leave the field to the person and do not present the guess
-as a suggestion. A key's strength is how pure it is for the value, discounted when it was seen only a few times: a
+the first candidate is an answer at all. When it is not, leave the field to the person: do not fill a guess in, and do
+not mark it as the suggestion. Listing guesses as unmarked choices the person may pick is another matter. Replaying a
+public stream of settled documents, showing the first guess that way saved about a third of the typing, even after
+charging for the time to read it, against about one percent for answers alone. The first guess was also wrong more often
+than right, though, and a value already filled in or highlighted is easily accepted without a look. A key's strength is
+how pure it is for the value, discounted when it was seen only a few times: a
 choice among a handful of values that every document has rarely decides another field, and without `KeyThreshold` its
 values are guesses, so it never outranks a similar document.
 
@@ -370,6 +374,15 @@ var team = form.Field("team") with { KeyThreshold = layers.Key.Chosen?.Threshold
 
 The replay looks each document up with all of its other values, while a live session often knows only some of them,
 so the precision it reports is an upper estimate for early fields.
+
+The two layers answer different kinds of documents. The key layer answers where a value the document already has
+decides the field. The similar document layer answers the rest, which are harder. A form whose judged fields rest only
+on observed fields (`DependsOn` naming observed fields alone) gets most of its answers from similar documents. In a
+replay of a public stream of settled documents, that layer's answers were right about seven times in ten at most, even
+among the most similar documents: documents whose observed values read almost the same had different settled values.
+Thresholds chosen there for a target of 0.8 delivered 0.66 to 0.72 on the documents that followed. Where settled
+documents come in batches that share their observed values, expect the similar document layer to fall short of a high
+target, and read even `MostPrecise` as optimistic: it is measured on the same documents it was chosen on.
 
 ## Build and test
 

@@ -20,6 +20,11 @@ with what to do.
 - **Forgetting a `LexicalMemory` row takes constant time** instead of renumbering every row after it — a case replaced
   by a newer document, as the form resolver and `ThresholdSelection` do on every settlement, no longer costs a pass over
   memory. Results are unchanged: ties still go to the answer remembered first.
+- **README guidance on guesses and on the similar document layer.** A guess should not be filled in or marked as the
+  suggestion, but listing guesses as unmarked choices is fine — replaying settled documents, it saved about a third of
+  the typing against one percent for answers alone. A form whose judged fields rest only on observed fields gets most
+  answers from the similar document layer, which can fall short of a high target where documents come in batches that
+  share their observed values.
 
 ## 0.6.0
 
