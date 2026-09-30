@@ -178,6 +178,76 @@ public sealed class KeyThresholdTests
     }
 
     [Fact]
+    public async Task The_similarity_threshold_is_chosen_on_the_lookups_no_key_answers()
+    {
+        // Most requests name a component that decides the team, and their text names it too, so a similar request is
+        // right as well. The rest come from a catch-all component whose team varies; their texts are just as similar to
+        // each other, but the nearest one's team is right about one time in five. Chosen on every lookup, a similarity
+        // threshold rides on the first kind — which the key already answers — and then answers the second kind wrongly.
+        var random = new Random(5);
+        string[] components = ["vpn", "printer", "badge", "laptop", "mail"];
+        string[] teams = ["network", "facilities", "security", "hardware", "accounts"];
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("component", FieldRole.Observed),
+                new FieldDefinition("summary", FieldRole.Observed),
+                new FieldDefinition("team", FieldRole.Judged),
+            ],
+            PromptLanguage.English);
+        SettledDocument Request(int i)
+        {
+            var (component, team) = random.NextDouble() < 0.85
+                ? (components[i % components.Length], teams[i % teams.Length])
+                : ("other", teams[random.Next(teams.Length)]);
+            var values = new Dictionary<string, string>
+            {
+                ["component"] = component,
+                ["summary"] = $"{component} routine problem report {random.Next(10000, 99999)}",
+                ["team"] = team,
+            };
+            return new SettledDocument($"t{i}", values, DateTimeOffset.UnixEpoch.AddMinutes(i));
+        }
+
+        var history = Enumerable.Range(1, 400).Select(Request).ToList();
+        var asked = Enumerable.Range(401, 400).Select(Request).Where(d => d.Values["component"] == "other").ToList();
+
+        var separate = (
+            Key: ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.8, 10),
+            Memory: await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", history, 0.8, 10, Ct));
+        var layered = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new LexicalMemory(), form, "team", history, 0.8, 10, Ct);
+
+        separate.Key.Should().NotBeNull(); // the named components decide the team
+        separate.Memory.Should().NotBeNull(); // every lookup together clears the target
+        layered.Key.Should().Be(separate.Key); // the key layer comes first, on every lookup, either way
+        layered.Memory.Should().BeNull(); // what the key leaves never does
+
+        async Task<(int Answered, int Right)> SimilarAnswers(double? keyThreshold, double? memoryThreshold)
+        {
+            var configured = new FormDefinition("ticket", [.. form.Fields.Select(f => f.Name == "team" ? f with { KeyThreshold = keyThreshold, MemoryThreshold = memoryThreshold } : f)], form.Language);
+            var resolver = new FormResolver(new FieldMemory(), new LexicalMemory());
+            await resolver.RebuildAsync(configured, history, Ct);
+            var (answered, right) = (0, 0);
+            foreach (var document in asked)
+            {
+                var team = (await resolver.SuggestAsync(configured, document.DocumentId, Without(document, "team"), Ct)).Single();
+                if (team.Answered && team.Source == FieldSource.SimilarDocument)
+                {
+                    answered++;
+                    right += team.Candidates[0].Value == document.Values["team"] ? 1 : 0;
+                }
+            }
+
+            return (answered, right);
+        }
+
+        var before = await SimilarAnswers(separate.Key?.Threshold, separate.Memory!.Threshold);
+        before.Answered.Should().BeGreaterThan(10);
+        ((double)before.Right / before.Answered).Should().BeLessThan(0.5); // the promise was 0.8
+        (await SimilarAnswers(layered.Key?.Threshold, layered.Memory?.Threshold)).Answered.Should().Be(0);
+    }
+
+    [Fact]
     public async Task A_key_below_the_threshold_is_a_guess_and_still_keeps_the_model_out()
     {
         var form = new FormDefinition(

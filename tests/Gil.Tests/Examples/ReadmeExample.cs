@@ -118,7 +118,7 @@ internal static class ReadmeExample
         var reopened = forms.Open(form, saved[0].DocumentId, saved[0].SettledAt);
         await reopened.SettleAsync("team", Settlement.Restore(saved[0].Values["team"]));
 
-        var similar = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
-        var key = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+        var layers = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+        var team = form.Field("team") with { KeyThreshold = layers.Key?.Threshold, MemoryThreshold = layers.Memory?.Threshold };
     }
 }

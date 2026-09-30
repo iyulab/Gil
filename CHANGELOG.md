@@ -3,6 +3,18 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Added
+
+- **`ThresholdSelection.SelectLayersAsync(fieldMemory, memory, form, field, documents, targetPrecision, minimumAnswered)`**
+  chooses a field's `KeyThreshold` and `MemoryThreshold` together, in the order the form resolver consults the layers,
+  and returns both as `LayerThresholds(Key, Memory)`. A similar document answers only where no key did, and those
+  lookups are harder than the rest: a `MemoryThreshold` chosen on every lookup by `SelectAsync` promised more precision
+  than the similar document layer then delivered on the documents that followed. Replaying a public stream of about
+  10,000 settled documents, answers from a similar document were right 66–75% of the time under a threshold chosen for
+  80%. `SelectAsync` on its own remains right for a field without a `KeyThreshold`.
+
 ## 0.5.2
 
 ### Fixed
