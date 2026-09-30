@@ -373,7 +373,15 @@ var team = form.Field("team") with { KeyThreshold = layers.Key.Chosen?.Threshold
 ```
 
 The replay looks each document up with all of its other values, while a live session often knows only some of them,
-so the precision it reports is an upper estimate for early fields.
+so the precision it reports is an upper estimate for early fields. It can be optimistic for fields settled with all of
+their evidence too. `targetPrecision` is checked on the documents the threshold is chosen on. Where settled documents
+come in batches — several at once from one source, alike in their observed values — whether a near-identical
+document's value is right tends to hold or fail for the whole batch. The replay then sees fewer independent cases than
+it counts. Replaying two public streams, thresholds chosen for a target of 0.8 answered right 0.63 to 0.74 of the time
+on the documents that followed, and those chosen for 0.7 answered right 0.64 to 0.72. The one exception, at 0.8, was a key layer
+backed by settled judged fields in one of the streams. Wider statistical margins did not close the gap. To know the
+precision a field actually delivers, check it on your own documents: choose on those settled up to a date and count
+the answers on those settled after it.
 
 The two layers answer different kinds of documents. The key layer answers where a value the document already has
 decides the field. The similar document layer answers the rest, which are harder. A form whose judged fields rest only

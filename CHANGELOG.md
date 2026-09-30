@@ -25,6 +25,9 @@ with what to do.
   the typing against one percent for answers alone. A form whose judged fields rest only on observed fields gets most
   answers from the similar document layer, which can fall short of a high target where documents come in batches that
   share their observed values.
+- **README: what `targetPrecision` promises.** It is met on the documents the threshold is chosen on. Where settled
+  documents come in batches alike in their observed values, the documents that follow can fall short of it — replaying
+  two public streams, 0.63–0.74 for a target of 0.8.
 
 ## 0.6.0
 
