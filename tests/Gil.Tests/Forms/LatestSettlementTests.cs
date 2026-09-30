@@ -197,7 +197,7 @@ public sealed class LatestSettlementTests
         var memory = new LexicalMemory();
         var choice = await ThresholdSelection.SelectAsync(memory, Ticket, "team", documents, 1.0, minimumAnswered: 1, Ct);
 
-        choice.Should().BeNull();
+        choice.Chosen.Should().BeNull();
         (await memory.LookupAsync("ticket/team", "summary: vpn drops", "q", Ct)).Match!.Source.Should().Be("d3");
         (await memory.LookupAsync("ticket/team", "summary: vpn drops", "q", Ct)).Match!.Answer.Should().Be("network");
     }

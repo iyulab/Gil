@@ -358,12 +358,14 @@ await reopened.SettleAsync("team", Settlement.Restore(saved[0].Values["team"]));
 
 The right thresholds move as memory grows. Choose them again from time to time — for instance when memory has grown
 by a tenth — by replaying the saved documents. Both are chosen in one replay, in the order the resolver consults the
-layers: a similar document answers only where no key did, so its threshold is chosen on those lookups alone. A null
-choice means that layer should not answer the field on its own:
+layers: a similar document answers only where no key did, so its threshold is chosen on those lookups alone. A layer
+without a `Chosen` threshold should not answer the field on its own; its `MostPrecise` still says how close it came —
+the best precision it reached on at least `minimumAnswered` answers — so the application can say by how much the field
+falls short:
 
 ```csharp
 var layers = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
-var team = form.Field("team") with { KeyThreshold = layers.Key?.Threshold, MemoryThreshold = layers.Memory?.Threshold };
+var team = form.Field("team") with { KeyThreshold = layers.Key.Chosen?.Threshold, MemoryThreshold = layers.Memory.Chosen?.Threshold };
 ```
 
 The replay looks each document up with all of its other values, while a live session often knows only some of them,

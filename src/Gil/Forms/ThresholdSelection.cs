@@ -8,10 +8,25 @@ namespace Gil.Forms;
 /// <param name="Lookups">How many lookups the replay made: every document with a settled value, except the first.</param>
 public sealed record ThresholdChoice(double Threshold, double Precision, double AnswerRate, int Answered, int Lookups);
 
-/// <summary>The thresholds chosen for a field's two memory layers, in the order the form resolver consults them.</summary>
-/// <param name="Key">For <see cref="FieldDefinition.KeyThreshold"/>; null when no key strength reaches the target.</param>
-/// <param name="Memory">For <see cref="FieldDefinition.MemoryThreshold"/>, chosen on the lookups no key answered; null when no similarity reaches the target there.</param>
-public sealed record LayerThresholds(ThresholdChoice? Key, ThresholdChoice? Memory);
+/// <summary>
+/// What replaying settled documents found for one memory layer of a field: the threshold chosen, if any, and — whether or
+/// not one was — how close the layer came, so a field that falls short of the target can say by how much.
+/// </summary>
+/// <param name="Chosen">The lowest threshold down to which every band of answers met the target precision; null when none does — the layer then should not answer this field on its own.</param>
+/// <param name="MostPrecise">
+/// The most precise threshold among those resting on at least the minimum number of answers — the highest one that
+/// gathers that many; null when the layer found fewer candidates than that at any score. Its precision is the best the
+/// layer reached, whether or not that met the target — taken together it can meet the target and still not be chosen,
+/// when a band within it falls short.
+/// </param>
+/// <param name="Lookups">How many lookups the replay made for this layer.</param>
+/// <param name="Candidates">How many of them found a candidate at any score.</param>
+public sealed record ThresholdReplay(ThresholdChoice? Chosen, ThresholdChoice? MostPrecise, int Lookups, int Candidates);
+
+/// <summary>The replays of a field's two memory layers, in the order the form resolver consults them.</summary>
+/// <param name="Key">For <see cref="FieldDefinition.KeyThreshold"/>, replayed on every lookup.</param>
+/// <param name="Memory">For <see cref="FieldDefinition.MemoryThreshold"/>, replayed on the lookups the chosen key threshold would not have answered.</param>
+public sealed record LayerThresholds(ThresholdReplay Key, ThresholdReplay Memory);
 
 /// <summary>
 /// Chooses <see cref="FieldDefinition.MemoryThreshold"/> and <see cref="FieldDefinition.KeyThreshold"/> by replaying settled documents. The right threshold moves as a
@@ -23,10 +38,11 @@ public static class ThresholdSelection
     /// <summary>
     /// Replays the documents in the order they were settled: each is looked up in a memory holding only the documents
     /// settled before it, by the evidence lines a session would send, and then remembered — replacing an earlier document
-    /// of the same case, as the form resolver does. Returns the lowest threshold down to which every band of answers
+    /// of the same case, as the form resolver does. Chooses the lowest threshold down to which every band of answers
     /// reaches <paramref name="targetPrecision"/> — precision fitted as a non-decreasing function of similarity, so a weak
     /// band is not admitted on the strength of good answers above it — with at least <paramref name="minimumAnswered"/>
-    /// answers in all, or null when no threshold does; memory then should not answer this field on its own. On its own this
+    /// answers in all. When no threshold does, <see cref="ThresholdReplay.Chosen"/> is null and memory should not answer
+    /// this field on its own; <see cref="ThresholdReplay.MostPrecise"/> still says how close it came. On its own this
     /// is right only for a field without a <see cref="FieldDefinition.KeyThreshold"/>: with one, a similar document answers
     /// only where no key did — choose both with <see cref="SelectLayersAsync"/>.
     /// </summary>
@@ -40,7 +56,7 @@ public static class ThresholdSelection
     /// and how much noise the field tolerates is the application's call.
     /// </param>
     /// <param name="cancellationToken">Cancels the replay.</param>
-    public static async Task<ThresholdChoice?> SelectAsync(
+    public static async Task<ThresholdReplay> SelectAsync(
         IMemory memory,
         FormDefinition form,
         string field,
@@ -75,8 +91,8 @@ public static class ThresholdSelection
     /// <param name="minimumAnswered">The fewest answers a precision may rest on, for each layer; the application's call.</param>
     /// <param name="cancellationToken">Cancels the replay.</param>
     /// <returns>
-    /// The two choices, each null when no threshold reaches the target. The memory choice's
-    /// <see cref="ThresholdChoice.Lookups"/> and <see cref="ThresholdChoice.AnswerRate"/> count only the lookups left to it.
+    /// A replay of each layer. The memory layer's <see cref="ThresholdReplay.Lookups"/>, and the answer rates of its
+    /// thresholds, count only the lookups left to it.
     /// </returns>
     public static async Task<LayerThresholds> SelectLayersAsync(
         FieldMemory fieldMemory,
@@ -96,22 +112,22 @@ public static class ThresholdSelection
 
         var steps = await ReplayAsync(fieldMemory, memory, form, field, documents, cancellationToken).ConfigureAwait(false);
         var keyed = steps.Where(s => s.KeyLooked).ToList();
-        var key = Lowest(
+        var key = Fit(
             [.. keyed.Where(s => s.Key is not null).Select(s => s.Key!.Value)],
             keyed.Count,
             targetPrecision,
             minimumAnswered);
-        var left = steps.Where(s => s.Looked && !(key is not null && s.Key is { } first && first.Strength >= key.Threshold));
+        var left = steps.Where(s => s.Looked && !(key.Chosen is { } chosen && s.Key is { } first && first.Strength >= chosen.Threshold));
         return new LayerThresholds(key, Similarity(left, targetPrecision, minimumAnswered));
     }
 
     /// <summary>
     /// Chooses <see cref="FieldDefinition.KeyThreshold"/> the same way: replays the documents in the order they were
     /// settled, asking a field memory holding only the documents settled before each for the best-ranked value under the
-    /// document's keys, then putting the document. Returns the lowest strength down to which every band of the values
+    /// document's keys, then putting the document. Chooses the lowest strength down to which every band of the values
     /// asked about reaches <paramref name="targetPrecision"/>, as for similarity, with at least
-    /// <paramref name="minimumAnswered"/> of them in all, or null when no strength does — the field's keys then should
-    /// not answer on their own. A document whose keys were never seen before is a lookup without an answer. Repeats of
+    /// <paramref name="minimumAnswered"/> of them in all; when no strength does, <see cref="ThresholdReplay.Chosen"/> is
+    /// null — the field's keys then should not answer on their own. A document whose keys were never seen before is a lookup without an answer. Repeats of
     /// the same documents answering each other well do not lower the strength that a weakly backed key needs. The key layer
     /// is consulted first, on every lookup, so this is right on its own; <see cref="SelectLayersAsync"/> chooses it the
     /// same way together with the memory threshold.
@@ -122,7 +138,7 @@ public static class ThresholdSelection
     /// <param name="documents">Settled documents, in any order.</param>
     /// <param name="targetPrecision">The share of answers that must match, in (0, 1].</param>
     /// <param name="minimumAnswered">The fewest answers a precision may rest on; the application's call, as for similarity.</param>
-    public static ThresholdChoice? SelectKeyThreshold(
+    public static ThresholdReplay SelectKeyThreshold(
         FieldMemory memory,
         FormDefinition form,
         string field,
@@ -159,7 +175,7 @@ public static class ThresholdSelection
             memory.Put(form, document);
         }
 
-        return Lowest(matches, lookups, targetPrecision, minimumAnswered);
+        return Fit(matches, lookups, targetPrecision, minimumAnswered);
     }
 
     /// <summary>One document of a replay: what the field memory and the document memory held before it said about it.</summary>
@@ -219,10 +235,10 @@ public static class ThresholdSelection
     }
 
     /// <summary>The similarity choice over the given lookups: every one counts, answered or not.</summary>
-    private static ThresholdChoice? Similarity(IEnumerable<Step> looked, double targetPrecision, int minimumAnswered)
+    private static ThresholdReplay Similarity(IEnumerable<Step> looked, double targetPrecision, int minimumAnswered)
     {
         var steps = looked.ToList();
-        return Lowest([.. steps.Where(s => s.Match is not null).Select(s => s.Match!.Value)], steps.Count, targetPrecision, minimumAnswered);
+        return Fit([.. steps.Where(s => s.Match is not null).Select(s => s.Match!.Value)], steps.Count, targetPrecision, minimumAnswered);
     }
 
     private static void Check(FormDefinition form, string field, double targetPrecision, int minimumAnswered)
@@ -240,9 +256,11 @@ public static class ThresholdSelection
     /// Fits precision as a non-decreasing function of the score (isotonic regression by pooling adjacent violators), then
     /// walks the fitted blocks from the highest score down while each block's own precision meets the target. The
     /// threshold is the lowest score of the last such block. Checking every block, not only the answers taken together,
-    /// keeps a band of weak answers from being admitted on the strength of many good ones above it.
+    /// keeps a band of weak answers from being admitted on the strength of many good ones above it. The fitted precision
+    /// falls from the top block down, so the answers above a block are at their most precise at the first block that
+    /// gathers <paramref name="minimumAnswered"/> of them.
     /// </summary>
-    private static ThresholdChoice? Lowest(List<(double Score, bool Correct)> matches, int lookups, double targetPrecision, int minimumAnswered)
+    private static ThresholdReplay Fit(List<(double Score, bool Correct)> matches, int lookups, double targetPrecision, int minimumAnswered)
     {
         var blocks = new List<(double Lowest, int Answered, int Correct)>();
         foreach (var group in matches.GroupBy(m => m.Score).OrderBy(g => g.Key))
@@ -258,18 +276,26 @@ public static class ThresholdSelection
             blocks.Add(block);
         }
 
-        ThresholdChoice? choice = null;
+        ThresholdChoice? chosen = null;
+        ThresholdChoice? mostPrecise = null;
+        var meets = true;
         var (answered, correct) = (0, 0);
-        for (var i = blocks.Count - 1; i >= 0 && (double)blocks[i].Correct / blocks[i].Answered >= targetPrecision; i--)
+        for (var i = blocks.Count - 1; i >= 0 && (meets || mostPrecise is null); i--)
         {
             answered += blocks[i].Answered;
             correct += blocks[i].Correct;
+            meets &= (double)blocks[i].Correct / blocks[i].Answered >= targetPrecision;
             if (answered >= minimumAnswered)
             {
-                choice = new ThresholdChoice(blocks[i].Lowest, (double)correct / answered, (double)answered / lookups, answered, lookups);
+                var threshold = new ThresholdChoice(blocks[i].Lowest, (double)correct / answered, (double)answered / lookups, answered, lookups);
+                mostPrecise ??= threshold;
+                if (meets)
+                {
+                    chosen = threshold;
+                }
             }
         }
 
-        return choice;
+        return new ThresholdReplay(chosen, mostPrecise, lookups, matches.Count);
     }
 }

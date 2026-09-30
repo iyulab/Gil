@@ -58,8 +58,8 @@ public sealed class KeyThresholdTests
     {
         var history = Requests(seed: 7, count: 300);
         var asked = Requests(seed: 8, count: 100, first: 1000);
-        var similarity = await ThresholdSelection.SelectAsync(new LexicalMemory(), Intake(null, null), "team", history, 0.8, 10, Ct);
-        var key = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), Intake(null, null), "team", history, 0.8, 10);
+        var similarity = (await ThresholdSelection.SelectAsync(new LexicalMemory(), Intake(null, null), "team", history, 0.8, 10, Ct)).Chosen;
+        var key = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), Intake(null, null), "team", history, 0.8, 10).Chosen;
         similarity.Should().NotBeNull();
         key.Should().BeNull(); // the department alone never reaches the target precision
 
@@ -116,7 +116,7 @@ public sealed class KeyThresholdTests
             return new SettledDocument($"t{i}", values, DateTimeOffset.UnixEpoch.AddMinutes(i));
         }).ToList();
 
-        var choice = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.95, 10);
+        var choice = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.95, 10).Chosen;
 
         choice.Should().NotBeNull();
         (choice!.Precision, choice.Lookups).Should().Be((1.0, 199));
@@ -157,7 +157,7 @@ public sealed class KeyThresholdTests
                 DateTimeOffset.UnixEpoch.AddMinutes(i + 1)))
             .ToList();
 
-        var choice = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.9, 10);
+        var choice = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.9, 10).Chosen;
 
         choice.Should().NotBeNull(); // repeats still answer
         var keyed = new FormDefinition("ticket", [.. form.Fields.Select(f => f.Name == "team" ? f with { KeyThreshold = choice!.Threshold } : f)], form.Language);
@@ -213,14 +213,15 @@ public sealed class KeyThresholdTests
         var asked = Enumerable.Range(401, 400).Select(Request).Where(d => d.Values["component"] == "other").ToList();
 
         var separate = (
-            Key: ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.8, 10),
-            Memory: await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", history, 0.8, 10, Ct));
+            Key: ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.8, 10).Chosen,
+            Memory: (await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", history, 0.8, 10, Ct)).Chosen);
         var layered = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new LexicalMemory(), form, "team", history, 0.8, 10, Ct);
 
         separate.Key.Should().NotBeNull(); // the named components decide the team
         separate.Memory.Should().NotBeNull(); // every lookup together clears the target
-        layered.Key.Should().Be(separate.Key); // the key layer comes first, on every lookup, either way
-        layered.Memory.Should().BeNull(); // what the key leaves never does
+        layered.Key.Chosen.Should().Be(separate.Key); // the key layer comes first, on every lookup, either way
+        layered.Memory.Chosen.Should().BeNull(); // what the key leaves never does
+        layered.Memory.MostPrecise!.Precision.Should().BeLessThan(0.8); // and the replay says by how much
 
         async Task<(int Answered, int Right)> SimilarAnswers(double? keyThreshold, double? memoryThreshold)
         {
@@ -244,7 +245,7 @@ public sealed class KeyThresholdTests
         var before = await SimilarAnswers(separate.Key?.Threshold, separate.Memory!.Threshold);
         before.Answered.Should().BeGreaterThan(10);
         ((double)before.Right / before.Answered).Should().BeLessThan(0.5); // the promise was 0.8
-        (await SimilarAnswers(layered.Key?.Threshold, layered.Memory?.Threshold)).Answered.Should().Be(0);
+        (await SimilarAnswers(layered.Key.Chosen?.Threshold, layered.Memory.Chosen?.Threshold)).Answered.Should().Be(0);
     }
 
     [Fact]

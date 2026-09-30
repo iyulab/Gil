@@ -63,7 +63,8 @@ public sealed class ThresholdSelectionTests
             "remember d3=network",
             "lookup ticket/team [summary: vpn down]",
             "remember d4=network");
-        choice.Should().Be(new ThresholdChoice(0.9, 1.0, 0.5, 1, 2)); // the empty first lookup counts, unanswered
+        var answered = new ThresholdChoice(0.9, 1.0, 0.5, 1, 2); // the empty first lookup counts, unanswered
+        choice.Should().Be(new ThresholdReplay(answered, answered, Lookups: 2, Candidates: 1));
     }
 
     [Fact]
@@ -77,22 +78,39 @@ public sealed class ThresholdSelectionTests
         var strict = await ThresholdSelection.SelectAsync(memory, Ticket, "team", documents, 0.95, minimumAnswered: 1, Ct);
         var loose = await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "a"), (0.8, "a"), (0.7, "b"), (0.6, "a"), (0.5, "b")), Ticket, "team", documents, 0.75, minimumAnswered: 1, Ct);
 
-        strict.Should().Be(new ThresholdChoice(0.8, 1.0, 0.4, 2, 5));
+        var top = new ThresholdChoice(0.8, 1.0, 0.4, 2, 5);
+        strict.Should().Be(new ThresholdReplay(top, top, Lookups: 5, Candidates: 5));
         // Together from 0.6 up the answers reach 3/4, but the band at 0.6–0.7 is right only half the time.
-        loose.Should().Be(new ThresholdChoice(0.8, 1.0, 0.4, 2, 5));
+        loose.Chosen.Should().Be(top);
         var lower = await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "a"), (0.8, "a"), (0.7, "b"), (0.6, "a"), (0.5, "b")), Ticket, "team", documents, 0.5, minimumAnswered: 1, Ct);
-        lower.Should().Be(new ThresholdChoice(0.6, 0.75, 0.8, 4, 5));
+        lower.Chosen.Should().Be(new ThresholdChoice(0.6, 0.75, 0.8, 4, 5));
+        lower.MostPrecise.Should().Be(top); // the most precise threshold is not the one chosen: that is the lowest to meet the target
     }
 
     [Fact]
-    public async Task No_threshold_is_chosen_when_the_target_is_out_of_reach_or_rests_on_too_few_answers()
+    public async Task No_threshold_is_chosen_when_the_target_is_out_of_reach_or_rests_on_too_few_answers_but_the_replay_still_says_how_close_it_came()
     {
         var documents = Enumerable.Range(0, 3).Select(i => Doc($"d{i}", $"s{i}", "a")).ToList();
 
-        (await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "b"), (0.8, "b")), Ticket, "team", documents, 0.5, 1, Ct)).Should().BeNull();
-        (await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "a"), (0.8, "a")), Ticket, "team", documents, 0.5, 3, Ct)).Should().BeNull();
+        var wrong = await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "b"), (0.8, "b")), Ticket, "team", documents, 0.5, 1, Ct);
+        wrong.Should().Be(new ThresholdReplay(null, new ThresholdChoice(0.8, 0.0, 1.0, 2, 2), Lookups: 2, Candidates: 2));
+        var few = await ThresholdSelection.SelectAsync(new ScriptedMemory((0.9, "a"), (0.8, "a")), Ticket, "team", documents, 0.5, 3, Ct);
+        few.Should().Be(new ThresholdReplay(null, null, Lookups: 2, Candidates: 2)); // two candidates, fewer than the three a precision may rest on
         await FluentActions.Awaiting(() => ThresholdSelection.SelectAsync(new ScriptedMemory(), Ticket, "summary", documents, 0.9, 1, Ct))
             .Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task Answers_that_meet_the_target_together_are_not_chosen_when_a_band_among_them_falls_short()
+    {
+        // 0.9 ✓ 0.9 ✓ 0.8 ✓ 0.8 ✗: bands [0.9] 1 and [0.8] 1/2. At least four answers must back a precision, and the four
+        // are right three times in four — the target, taken together — but the band at 0.8 is right half the time.
+        var memory = new ScriptedMemory((0.9, "a"), (0.9, "a"), (0.8, "a"), (0.8, "b"));
+        var documents = Enumerable.Range(0, 5).Select(i => Doc($"d{i}", $"s{i}", "a"));
+
+        var replay = await ThresholdSelection.SelectAsync(memory, Ticket, "team", documents, 0.75, minimumAnswered: 4, Ct);
+
+        replay.Should().Be(new ThresholdReplay(null, new ThresholdChoice(0.8, 0.75, 1.0, 4, 4), Lookups: 4, Candidates: 4));
     }
 
     [Fact]
@@ -110,8 +128,8 @@ public sealed class ThresholdSelectionTests
 
         var choice = await ThresholdSelection.SelectAsync(new LexicalMemory(), Ticket, "team", documents, 1.0, minimumAnswered: 2, Ct);
 
-        choice.Should().NotBeNull();
-        (choice!.Answered, choice.Lookups, choice.Precision).Should().Be((2, 5, 1.0)); // only the two near repeats are answered
-        choice.Threshold.Should().BeGreaterThan(0.3);
+        choice.Chosen.Should().NotBeNull();
+        (choice.Chosen!.Answered, choice.Lookups, choice.Chosen.Precision).Should().Be((2, 5, 1.0)); // only the two near repeats are answered
+        choice.Chosen.Threshold.Should().BeGreaterThan(0.3);
     }
 }

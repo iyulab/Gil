@@ -3,7 +3,24 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## 0.7.0
+
+### Breaking
+
+- **`ThresholdSelection` returns what the replay found even when no threshold meets the target.** `SelectAsync` and
+  `SelectKeyThreshold` return a `ThresholdReplay` instead of a nullable `ThresholdChoice`, and `LayerThresholds.Key`
+  and `LayerThresholds.Memory` are `ThresholdReplay`s. A field that fell short used to come back as `null`, losing how
+  close it came; `ThresholdReplay.MostPrecise` now gives the best precision the layer reached on at least
+  `minimumAnswered` answers, with `Lookups` and `Candidates` counting the lookups made and those that found anything.
+  **What to do**: read the threshold from `Chosen` — `layers.Key.Chosen?.Threshold`,
+  `(await ThresholdSelection.SelectAsync(…)).Chosen` — where you read the choice itself before.
+
 ## 0.6.0
+
+### Breaking
+
+- **`FormResolver`'s constructor gained an optional `similarDocumentCount` parameter** (after `timeProvider`). Source
+  compiles unchanged; a binary built against 0.5.x that constructs a `FormResolver` must be rebuilt.
 
 ### Added
 
