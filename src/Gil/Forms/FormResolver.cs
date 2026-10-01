@@ -142,8 +142,8 @@ public sealed class FormResolver
     /// <summary>
     /// One field's suggestion. Layers that answer come first — values under a key strong enough
     /// (<see cref="FieldDefinition.KeyThreshold"/>), a document similar enough (<see cref="FieldDefinition.MemoryThreshold"/>),
-    /// and a model where neither memory had anything — then guesses: the nearest document below the threshold, values
-    /// under weaker keys, the field's most frequent values. <c>arrival</c> is the order the document's values arrived in,
+    /// and a model where neither memory had anything — then guesses: values under weaker keys, the field's most frequent
+    /// value, the nearest document below the threshold, the field's other values. <c>arrival</c> is the order the document's values arrived in,
     /// oldest first — the order a model sees its evidence in; null when the caller has no history (a stateless
     /// suggestion), and the form's order then.
     /// </summary>
@@ -176,12 +176,16 @@ public sealed class FormResolver
             energy += modelled.Energy;
         }
 
+        // Guesses, strongest first, as replaying settled streams ranked them: values under weaker keys, the field's most
+        // frequent value, the nearest document below its threshold, then the field's other values by frequency.
+        var frequent = remembered.Where(c => c.Evidence is null).ToList();
         var candidates = keyed.Where(c => c.Trusted)
             .Concat(similar.Where(c => c.Trusted))
             .Concat(modelled?.Candidates ?? [])
-            .Concat(similar.Where(c => !c.Trusted))
             .Concat(keyed.Where(c => !c.Trusted))
-            .Concat(remembered.Where(c => c.Evidence is null))
+            .Concat(frequent.Take(1))
+            .Concat(similar.Where(c => !c.Trusted))
+            .Concat(frequent.Skip(1))
             .DistinctBy(c => c.Value, StringComparer.Ordinal)
             .Take(CandidateCount)
             .ToList();
@@ -209,16 +213,19 @@ public sealed class FormResolver
     }
 
     /// <summary>
-    /// The most similar settled document's value — trusted when similar enough — the documents behind it, and what the
-    /// lookup found. The document itself is never its own evidence: one more is asked for, and it is passed over.
+    /// The most similar settled document's value — trusted when similar enough, a guess when the field sets no threshold —
+    /// the documents behind it, and what the lookup found. The document itself is never its own evidence: one more is
+    /// asked for, and it is passed over.
     /// </summary>
     private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
         FieldDefinition field, string documentId, string task, string evidence, string traceId, CancellationToken cancellationToken)
     {
-        if (DocumentMemory is not IMemory memory || field.MemoryThreshold is not double threshold || evidence.Length == 0)
+        if (DocumentMemory is not IMemory memory || evidence.Length == 0)
         {
             return ([], [], null, 0);
         }
+
+        var threshold = field.MemoryThreshold;
 
         try
         {
@@ -258,7 +265,7 @@ public sealed class FormResolver
         }
 
         var energy = 0.0;
-        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged && f.MemoryThreshold is not null))
+        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged))
         {
             var task = TaskName(form, field.Name);
             if (!_cases.TryGetValue(task, out var cases))

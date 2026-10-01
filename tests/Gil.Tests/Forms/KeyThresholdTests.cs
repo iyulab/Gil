@@ -278,7 +278,7 @@ public sealed class KeyThresholdTests
     }
 
     [Fact]
-    public async Task The_nearest_document_below_the_similarity_threshold_is_the_first_guess()
+    public async Task The_nearest_document_below_the_similarity_threshold_is_the_last_guess()
     {
         var form = new FormDefinition(
             "ticket",
@@ -297,10 +297,70 @@ public sealed class KeyThresholdTests
 
         var team = (await resolver.SuggestAsync(form, "d4", new Dictionary<string, string> { ["summary"] = "printer on floor 2 is jammed" }, Ct)).Single();
 
+        // Below its threshold, the nearest document is a weaker guess than the field's most frequent value.
         team.Answered.Should().BeFalse();
         team.Candidates.Select(c => (c.Value, c.Source, c.Evidence, c.Trusted)).Should().Equal(
-            ("facilities", FieldSource.SimilarDocument, "d1", false),
-            ("network", FieldSource.SettledFieldMemory, null, false));
+            ("network", FieldSource.SettledFieldMemory, null, false),
+            ("facilities", FieldSource.SimilarDocument, "d1", false));
+    }
+
+    [Fact]
+    public async Task Guesses_come_as_a_weaker_key_then_the_most_frequent_value_then_the_nearest_document()
+    {
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("summary", FieldRole.Observed),
+                new FieldDefinition("site", FieldRole.Observed),
+                new FieldDefinition("team", FieldRole.Judged) { DependsOn = ["summary", "site"], KeyThreshold = 0.99, MemoryThreshold = 0.99 },
+            ],
+            PromptLanguage.English);
+        SettledDocument Doc(int i, string summary, string site, string team) =>
+            new($"d{i}", new Dictionary<string, string> { ["summary"] = summary, ["site"] = site, ["team"] = team }, DateTimeOffset.UnixEpoch.AddMinutes(i));
+        var resolver = new FormResolver(new FieldMemory(), new LexicalMemory());
+        await resolver.RebuildAsync(form,
+        [
+            Doc(1, "printer on floor 3 is jammed", "north", "facilities"),
+            Doc(2, "vpn drops", "south", "network"),
+            Doc(3, "wifi drops", "south", "network"),
+            Doc(4, "badge reader is dead", "east", "security"),
+        ], Ct);
+
+        var team = (await resolver.SuggestAsync(form, "d9", new Dictionary<string, string> { ["summary"] = "printer on floor 2 is jammed", ["site"] = "east" }, Ct)).Single();
+
+        team.Answered.Should().BeFalse();
+        team.Candidates.Select(c => (c.Value, c.Source, c.Trusted)).Should().Equal(
+            ("security", FieldSource.SettledFieldMemory, false), // under the weak key site: east
+            ("network", FieldSource.SettledFieldMemory, false), // the most frequent value
+            ("facilities", FieldSource.SimilarDocument, false)); // the nearest document, below its threshold
+    }
+
+    [Fact]
+    public async Task A_field_without_a_similarity_threshold_still_shows_its_similar_documents_and_guesses_last()
+    {
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("summary", FieldRole.Observed),
+                new FieldDefinition("team", FieldRole.Judged),
+            ],
+            PromptLanguage.English);
+        var resolver = new FormResolver(new FieldMemory(), new LexicalMemory(), similarDocumentCount: 2);
+        await resolver.RebuildAsync(form,
+        [
+            new SettledDocument("d1", new Dictionary<string, string> { ["summary"] = "printer on floor 3 is jammed", ["team"] = "facilities" }, DateTimeOffset.UnixEpoch.AddMinutes(1)),
+            new SettledDocument("d2", new Dictionary<string, string> { ["summary"] = "vpn drops", ["team"] = "network" }, DateTimeOffset.UnixEpoch.AddMinutes(2)),
+            new SettledDocument("d3", new Dictionary<string, string> { ["summary"] = "wifi drops", ["team"] = "network" }, DateTimeOffset.UnixEpoch.AddMinutes(3)),
+        ], Ct);
+
+        // A near-identical document makes no promise without a threshold, but is still the evidence a person can see.
+        var team = (await resolver.SuggestAsync(form, "d4", new Dictionary<string, string> { ["summary"] = "printer on floor 3 is jammed again" }, Ct)).Single();
+
+        team.Answered.Should().BeFalse();
+        team.Candidates.Select(c => (c.Value, c.Source, c.Trusted)).Should().Equal(
+            ("network", FieldSource.SettledFieldMemory, false),
+            ("facilities", FieldSource.SimilarDocument, false));
+        team.SimilarDocuments.Select(m => m.Source).Should().StartWith("d1");
     }
 
     [Fact]

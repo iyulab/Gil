@@ -3,6 +3,25 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Breaking
+
+- **A form field without `MemoryThreshold` still looks for similar documents.** Null used to skip the similar document
+  layer; it now means no promise from it. With a document memory, the nearest document is looked up, reported in
+  `SimilarDocuments` and offered as a guess, so a field whose threshold could not be chosen keeps its evidence instead
+  of losing it. `Recall.Threshold` is `double?`, null for a lookup made without a threshold. Every judged field is now
+  remembered and looked up in the document memory, which costs what it costs for a field with a threshold — an
+  embedding per field and document with an embedding memory. **What to do**: nothing to keep the first guess you had, since the new one comes
+  after the most frequent value; to keep a field away from the document memory, resolve it with a resolver that has
+  none.
+- **Guesses come in a new order**: values under a key below `KeyThreshold`, then the field's most frequent value, then
+  the nearest document below `MemoryThreshold` — which used to come first — then the field's other values. Replaying
+  two public streams of settled documents, the nearest document below its threshold was right less often than a weaker
+  key or the most frequent value, and about twice as often as the next most frequent one (first guess right 0.28 and
+  0.27 of the time in the new order, against 0.26 and 0.22 with the nearest document first).
+  **What to do**: nothing, unless you relied on a guess's position; answers (`Trusted` candidates) are unchanged.
+
 ## 0.7.0
 
 ### Breaking

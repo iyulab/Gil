@@ -308,8 +308,12 @@ Each field is tried in a fixed order, and `FieldSuggestion.Source` says which la
    field). It is asked only when neither memory had anything, so it never overrides a value the document supports.
 
 A layer answers only at or above its threshold. What falls short is still offered, after the layers that answered, as
-a guess: the nearest document below `MemoryThreshold`, values under a key below `KeyThreshold`, then the values settled
-most often for the field. `FieldCandidate.Trusted` marks which is which, and `FieldSuggestion.Answered` says whether
+a guess: values under a key below `KeyThreshold`, then the value settled most often for the field, then the nearest
+document below `MemoryThreshold`, then the field's other values by how often they were settled. Replaying public
+streams of settled documents ranked them so: the nearest document below its threshold was right less often than a
+weaker key or the most frequent value, but far more often than the next most frequent ones. A field without
+`MemoryThreshold` makes no promise from similar documents, but with a document memory the nearest one is still looked
+up and offered in the same place. `FieldCandidate.Trusted` marks which is which, and `FieldSuggestion.Answered` says whether
 the first candidate is an answer at all. When it is not, leave the field to the person: do not fill a guess in, and do
 not mark it as the suggestion. Listing guesses as unmarked choices the person may pick is another matter. Replaying a
 public stream of settled documents, showing the first guess that way saved about a third of the typing, even after
@@ -317,7 +321,7 @@ charging for the time to read it, against about one percent for answers alone. T
 than right, though, and a value already filled in or highlighted is easily accepted without a look. A key's strength is
 how pure it is for the value, discounted when it was seen only a few times: a
 choice among a handful of values that every document has rarely decides another field, and without `KeyThreshold` its
-values are guesses, so it never outranks a similar document.
+values are guesses, so it never outranks a similar document that meets its threshold.
 
 To show what a similar document's candidate rests on, create the resolver with `similarDocumentCount`: each suggestion
 then carries `SimilarDocuments`, the most similar settled documents with their similarity and settled value, the

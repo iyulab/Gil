@@ -95,18 +95,21 @@ public sealed record PathStep(
 /// </summary>
 /// <param name="Source">The request that confirmed the nearest answer; null when the lookup failed.</param>
 /// <param name="Similarity">Similarity to it; null when the lookup failed.</param>
-/// <param name="Threshold">The task's memory threshold at the time.</param>
+/// <param name="Threshold">
+/// The memory threshold at the time; null when the lookup was made without one (a form field that sets no
+/// <c>MemoryThreshold</c> still looks for similar documents, and offers the nearest as a guess).
+/// </param>
 /// <param name="Hit">Whether the remembered answer was returned.</param>
 /// <param name="Error">Why the lookup failed (exception type and message); null when it succeeded.</param>
 public sealed record Recall(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Source,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Similarity,
-    double Threshold,
+    double? Threshold,
     bool Hit,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null)
 {
     /// <summary>A lookup that failed and was treated as a miss.</summary>
-    public static Recall Failed(double threshold, Exception error)
+    public static Recall Failed(double? threshold, Exception error)
     {
         ArgumentNullException.ThrowIfNull(error);
         return new Recall(null, null, threshold, false, $"{error.GetType().Name}: {error.Message}");

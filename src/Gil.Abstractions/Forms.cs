@@ -38,7 +38,9 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
 
     /// <summary>
     /// Similarity at or above which a similar settled document's value is suggested. There is no default, for the same
-    /// reason as <see cref="TaskPolicy.MemoryThreshold"/>: the scale belongs to the memory in use. Null skips that layer.
+    /// reason as <see cref="TaskPolicy.MemoryThreshold"/>: the scale belongs to the memory in use. Null makes no promise:
+    /// with a document memory the layer still looks, reports <see cref="FieldSuggestion.SimilarDocuments"/>, and offers
+    /// the nearest document's value as a guess, as it does below a threshold.
     /// </summary>
     public double? MemoryThreshold { get; init; }
 
@@ -48,7 +50,8 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     /// the key is for it, discounted when the key was seen only a few times, so a key settled once is at most 0.5. The
     /// best-ranked value's strongest key decides for the whole layer. Null offers those values only as guesses, after
     /// every layer that answers: a key that rarely decides the field, such as a choice among a handful of values that
-    /// every document has, must not outrank a similar document. Choose it by replaying settled documents
+    /// every document has, must not outrank a similar document that meets its threshold. Among guesses it comes first,
+    /// before the field's most frequent value and the nearest document below its threshold. Choose it by replaying settled documents
     /// (<c>ThresholdSelection.SelectKeyThreshold</c>).
     /// </summary>
     public double? KeyThreshold { get; init; }
@@ -181,9 +184,10 @@ public enum FieldSource
 /// </param>
 /// <param name="Trusted">
 /// Whether the layer answered: its threshold was met (<see cref="FieldDefinition.KeyThreshold"/>,
-/// <see cref="FieldDefinition.MemoryThreshold"/>) or it is a model's choice. False marks a guess — the nearest document
-/// below the similarity threshold, values under a key too weak to decide, the field's most frequent values — which an
-/// application may still list but should not present as a suggestion.
+/// <see cref="FieldDefinition.MemoryThreshold"/>) or it is a model's choice. False marks a guess — values under a key too
+/// weak to decide, the field's most frequent value, the nearest document below the similarity threshold (or with none
+/// set), the field's other values, in that order — which an application may still list but should not present as a
+/// suggestion.
 /// </param>
 public sealed record FieldCandidate(string Value, double Score, FieldSource Source, string? Evidence, bool Trusted = true);
 
@@ -215,8 +219,8 @@ public sealed record FieldSuggestion(
     /// <summary>
     /// The settled documents most similar to this one, most similar first — the evidence behind the candidate from a
     /// similar document, so a person can see what it rests on and whether its neighbours agree. The first is that
-    /// candidate's document. Empty unless the resolver was asked for them, the field sets
-    /// <see cref="FieldDefinition.MemoryThreshold"/> and the document memory found a document; the document itself is never
+    /// candidate's document. Empty unless the resolver was asked for them and has a document memory that found a document
+    /// — whether or not the field sets <see cref="FieldDefinition.MemoryThreshold"/>; the document itself is never
     /// among them. Memory keeps one document per case, so each is a different case.
     /// </summary>
     public IReadOnlyList<MemoryMatch> SimilarDocuments { get; init; } = [];
