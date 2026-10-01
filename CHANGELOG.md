@@ -3,6 +3,18 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Changed
+
+- **A `LexicalMemory` lookup reads only the n-grams a row shares with the request.** Every n-gram lists the rows that
+  hold it with their weights, side by side, and a lookup adds those up instead of walking every row's n-grams against
+  the request's. Results are unchanged to the bit — the products are added in the same order — and a lookup over a large
+  memory is about ten times faster: replaying two public streams of settled documents, suggesting six judged fields
+  against 50,000 remembered documents took 60 and 35 ms at the median instead of 590 and 343 ms. The lists hold a copy
+  of each row's weights, so what a row holds per n-gram takes about three quarters more space, and they are rebuilt
+  whenever the weights are taken afresh — remembering a large history takes up to twice as long.
+
 ## 0.8.0
 
 ### Breaking
