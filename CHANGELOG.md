@@ -22,6 +22,12 @@ with what to do.
   0.27 of the time in the new order, against 0.26 and 0.22 with the nearest document first).
   **What to do**: nothing, unless you relied on a guess's position; answers (`Trusted` candidates) are unchanged.
 
+### Fixed
+
+- **Every package carries the license text.** The packages declared Apache-2.0 by expression only, so a consumer
+  collecting third-party notices from the packages found the name and no text; `LICENSE` now ships next to
+  `README.md` in each package.
+
 ## 0.7.0
 
 ### Breaking

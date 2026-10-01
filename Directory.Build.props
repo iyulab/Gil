@@ -31,6 +31,8 @@
 
   <ItemGroup Condition="$(MSBuildProjectName.StartsWith('Gil')) And !$(MSBuildProjectName.EndsWith('.Tests'))">
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+    <!-- The license expression names Apache-2.0; its §4(a) asks redistributed copies to carry the text itself. -->
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
