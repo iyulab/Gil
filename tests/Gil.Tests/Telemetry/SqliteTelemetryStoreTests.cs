@@ -137,6 +137,22 @@ public sealed class SqliteTelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_lookup_made_without_a_threshold_is_stored_without_one()
+    {
+        using var store = new SqliteTelemetryStore(Path.Combine(_directory, "r.sqlite"));
+        store.OpenTrace("t1", "task", "입력");
+        var unpromised = new Recall("t0", 0.71, null, Hit: false);
+        store.CloseTrace("t1", CompatibilityFixture.Outcome with { Recall = unpromised });
+
+        store.FindTrace("t1")!.Recall.Should().Be(unpromised);
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(_directory, "r.sqlite")}");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT recall FROM traces WHERE trace_id = 't1'";
+        command.ExecuteScalar().Should().Be("""{"source":"t0","similarity":0.71,"hit":false}""");
+    }
+
+    [Fact]
     public void A_failed_lookup_is_stored_with_its_error_and_without_a_neighbour()
     {
         using var store = new SqliteTelemetryStore(Path.Combine(_directory, "r.sqlite"));

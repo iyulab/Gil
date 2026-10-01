@@ -104,7 +104,7 @@ public sealed record PathStep(
 public sealed record Recall(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Source,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Similarity,
-    double? Threshold,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Threshold,
     bool Hit,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null)
 {

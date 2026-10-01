@@ -10,11 +10,11 @@ with what to do.
 - **A form field without `MemoryThreshold` still looks for similar documents.** Null used to skip the similar document
   layer; it now means no promise from it. With a document memory, the nearest document is looked up, reported in
   `SimilarDocuments` and offered as a guess, so a field whose threshold could not be chosen keeps its evidence instead
-  of losing it. `Recall.Threshold` is `double?`, null for a lookup made without a threshold. Every judged field is now
-  remembered and looked up in the document memory, which costs what it costs for a field with a threshold — an
-  embedding per field and document with an embedding memory. **What to do**: nothing to keep the first guess you had, since the new one comes
-  after the most frequent value; to keep a field away from the document memory, resolve it with a resolver that has
-  none.
+  of losing it. `Recall.Threshold` is `double?`, null for a lookup made without a threshold, and a stored trace then has
+  no `threshold` in its `recall`. Every judged field is now remembered and looked up in the document memory, which costs
+  what it costs for a field with a threshold — an embedding per field and document with an embedding memory. **What to
+  do**: nothing to keep the first guess you had, since the new one comes after the most frequent value; to keep a field
+  away from the document memory, resolve it with a resolver that has none.
 - **Guesses come in a new order**: values under a key below `KeyThreshold`, then the field's most frequent value, then
   the nearest document below `MemoryThreshold` — which used to come first — then the field's other values. Replaying
   two public streams of settled documents, the nearest document below its threshold was right less often than a weaker
