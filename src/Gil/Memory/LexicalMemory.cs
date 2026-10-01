@@ -124,9 +124,16 @@ public sealed class LexicalMemory : IMemory
     /// <summary>
     /// Rows in no particular order, each numbered in the order it was remembered — a key remembered again keeps its number —
     /// and ties go to the smaller number, so forgetting a row moves the last one into its place instead of shifting the
-    /// rest. Each distinct n-gram gets an id once, and a row holds its ids sorted with their counts and weights, so a lookup
-    /// compares two sorted lists instead of hashing.
+    /// rest. Each distinct n-gram gets an id once, and a row holds its ids sorted with their counts and weights.
     /// </summary>
+    /// <remarks>
+    /// A lookup touches only the n-grams a row shares with the request: every id lists, side by side, the slots of the rows
+    /// that hold it and their weights for it, and the request's ids are walked in ascending order, so each row's products
+    /// are added in the order a walk along both sorted lists would add them — the sums are the same to the bit. A slot is
+    /// given to a row once and never moves, so the lists are read front to back and written into one array of sums. A row
+    /// forgotten or replaced leaves its slot behind, summed but never read, until such entries outnumber the live ones and
+    /// the lists are rebuilt; they are rebuilt too whenever the weights are taken afresh.
+    /// </remarks>
     private sealed class Index
     {
         private readonly List<Row> _rows = [];
@@ -134,6 +141,10 @@ public sealed class LexicalMemory : IMemory
         private readonly Dictionary<string, int> _position = [];
         private readonly Dictionary<string, int> _ids = new(StringComparer.Ordinal);
         private readonly List<int> _frequency = [];
+        private readonly List<Postings> _postings = [];
+        private int _slots;
+        private long _live;
+        private long _gone;
 
         // The inverse document frequency of every id known when there were _takenAt rows; later ids had none.
         private double[] _idf = [];
@@ -150,6 +161,7 @@ public sealed class LexicalMemory : IMemory
             if (existing)
             {
                 Tally(_rows[at].Ids, -1);
+                Retire(_rows[at]);
                 _rows[at] = row;
             }
             else
@@ -159,7 +171,11 @@ public sealed class LexicalMemory : IMemory
             }
 
             Tally(ids, +1);
-            Refresh();
+            if (!Refresh())
+            {
+                Post(row);
+                Compact();
+            }
         }
 
         public void Remove(string key)
@@ -170,6 +186,7 @@ public sealed class LexicalMemory : IMemory
             }
 
             Tally(_rows[at].Ids, -1);
+            Retire(_rows[at]);
             var last = _rows[^1];
             _rows.RemoveAt(_rows.Count - 1);
             if (at < _rows.Count)
@@ -178,7 +195,10 @@ public sealed class LexicalMemory : IMemory
                 _position[last.Key] = at;
             }
 
-            Refresh();
+            if (!Refresh())
+            {
+                Compact();
+            }
         }
 
         /// <summary>The most similar row; on a tie, the one remembered first.</summary>
@@ -232,32 +252,28 @@ public sealed class LexicalMemory : IMemory
             var queryNorm = Math.Sqrt(squares + Math.Pow(Weigh(ids, [.. known.Select(k => k.Count)], weights), 2));
 
             var similarities = new double[_rows.Count];
+            if (queryNorm == 0)
+            {
+                return similarities;
+            }
+
+            var sums = new double[_slots];
+            for (var i = 0; i < ids.Length; i++)
+            {
+                var weight = weights[i];
+                var postings = _postings[ids[i]];
+                var slots = postings.Slots.AsSpan(0, postings.Count);
+                var rowWeights = postings.Weights.AsSpan(0, postings.Count);
+                for (var k = 0; k < slots.Length; k++)
+                {
+                    sums[slots[k]] += weight * rowWeights[k];
+                }
+            }
+
             for (var r = 0; r < _rows.Count; r++)
             {
                 var row = _rows[r];
-                var similarity = 0.0;
-                if (queryNorm > 0 && row.Norm > 0)
-                {
-                    for (int i = 0, j = 0; i < ids.Length && j < row.Ids.Length;)
-                    {
-                        if (ids[i] == row.Ids[j])
-                        {
-                            similarity += weights[i++] * row.Weights[j++];
-                        }
-                        else if (ids[i] < row.Ids[j])
-                        {
-                            i++;
-                        }
-                        else
-                        {
-                            j++;
-                        }
-                    }
-
-                    similarity /= queryNorm * row.Norm;
-                }
-
-                similarities[r] = similarity;
+                similarities[r] = row.Norm > 0 ? sums[row.Slot] / (queryNorm * row.Norm) : 0;
             }
 
             return similarities;
@@ -273,6 +289,7 @@ public sealed class LexicalMemory : IMemory
                 {
                     _ids[gram] = id = _ids.Count;
                     _frequency.Add(0);
+                    _postings.Add(new Postings());
                 }
 
                 pairs[n++] = (id, count);
@@ -282,12 +299,15 @@ public sealed class LexicalMemory : IMemory
             return ([.. pairs.Select(p => p.Id)], [.. pairs.Select(p => p.Count)]);
         }
 
-        /// <summary>Takes the frequencies afresh once the row count has moved by a tenth (at least one) since last time.</summary>
-        private void Refresh()
+        /// <summary>
+        /// Takes the frequencies afresh once the row count has moved by a tenth (at least one) since last time, reweighs
+        /// every row and rebuilds the postings; false when it is not yet time.
+        /// </summary>
+        private bool Refresh()
         {
             if (Math.Abs(_rows.Count - _takenAt) < Math.Max(1, _takenAt / 10))
             {
-                return;
+                return false;
             }
 
             _takenAt = _rows.Count;
@@ -295,6 +315,51 @@ public sealed class LexicalMemory : IMemory
             foreach (var row in _rows)
             {
                 row.Norm = Weigh(row.Ids, row.Counts, row.Weights);
+            }
+
+            Repost();
+            return true;
+        }
+
+        /// <summary>Lists the row under each of its ids, in a slot of its own.</summary>
+        private void Post(Row row)
+        {
+            row.Slot = _slots++;
+            for (var j = 0; j < row.Ids.Length; j++)
+            {
+                _postings[row.Ids[j]].Add(row.Slot, row.Weights[j]);
+            }
+
+            _live += row.Ids.Length;
+        }
+
+        private void Retire(Row row)
+        {
+            _live -= row.Ids.Length;
+            _gone += row.Ids.Length;
+        }
+
+        /// <summary>Rebuilds the postings once the entries of rows gone outnumber the live ones.</summary>
+        private void Compact()
+        {
+            if (_gone > _live)
+            {
+                Repost();
+            }
+        }
+
+        /// <summary>Lists the live rows afresh, in slots numbered from zero, with their current weights.</summary>
+        private void Repost()
+        {
+            foreach (var postings in _postings)
+            {
+                postings.Count = 0;
+            }
+
+            (_slots, _live, _gone) = (0, 0, 0);
+            foreach (var row in _rows)
+            {
+                Post(row);
             }
         }
 
@@ -338,6 +403,38 @@ public sealed class LexicalMemory : IMemory
             public double[] Weights { get; } = weights;
 
             public double Norm { get; set; }
+
+            /// <summary>Where the row's sum is kept during a lookup.</summary>
+            public int Slot { get; set; }
+        }
+
+        /// <summary>The slots of the rows holding one n-gram and their weights for it, side by side.</summary>
+        private sealed class Postings
+        {
+            public int[] Slots { get; private set; } = [];
+
+            public double[] Weights { get; private set; } = [];
+
+            public int Count { get; set; }
+
+            public void Add(int slot, double weight)
+            {
+                if (Count == Slots.Length)
+                {
+                    var capacity = Math.Max(4, Count * 2);
+                    (Slots, Weights) = (Grow(Slots, capacity), Grow(Weights, capacity));
+                }
+
+                (Slots[Count], Weights[Count]) = (slot, weight);
+                Count++;
+            }
+
+            private static T[] Grow<T>(T[] items, int capacity)
+            {
+                var grown = new T[capacity];
+                items.CopyTo(grown, 0);
+                return grown;
+            }
         }
     }
 }

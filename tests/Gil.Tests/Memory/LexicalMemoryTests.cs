@@ -265,4 +265,28 @@ public sealed class LexicalMemoryTests
         top.Select(m => m.Similarity).Should().BeInDescendingOrder();
         memory.Nearest("task", "please refund my order", 10).Should().HaveCount(4);
     }
+
+    [Fact]
+    public async Task Rows_replaced_and_forgotten_many_times_leave_no_trace_in_lookups()
+    {
+        var memory = new LexicalMemory();
+        await memory.RememberAsync("task", "kept", "my card was blocked at the shop", "cards_block", "s", Ct);
+        for (var i = 0; i < 40; i++)
+        {
+            // Replacing and forgetting leaves gone rows behind until they outnumber the live ones and are dropped.
+            await memory.RememberAsync("task", "moving", $"refund order number {i} please", $"answer_{i}", "s", Ct);
+            await memory.RememberAsync("task", $"brief_{i}", $"where is parcel {i}", "tracking", "s", Ct);
+            memory.Forget("task", $"brief_{i}");
+        }
+
+        var all = memory.Nearest("task", "refund order number 39 please", 10);
+        var stale = memory.Nearest("task", "refund order number 0 please", 10);
+
+        all.Select(m => m.Source).Should().Equal("moving", "kept");
+        all[0].Answer.Should().Be("answer_39");
+        all[0].Similarity.Should().BeApproximately(1.0, 1e-12);
+        stale.Select(m => m.Source).Should().Equal("moving", "kept"); // the old text is gone with the row it was in
+        stale[0].Answer.Should().Be("answer_39");
+        memory.Count("task").Should().Be(2);
+    }
 }
