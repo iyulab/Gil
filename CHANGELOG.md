@@ -15,7 +15,7 @@ with what to do.
   through the same fold, so either way reaches the same weights to the bit. Suggestions and chosen thresholds are
   unchanged: replaying public streams of settled documents gave the same suggestions and answers, with scores and
   thresholds equal to within 1e-12. Replaying about 95,000 log lines whose host and process recur on nearly every line
-  took 11 seconds instead of more than 20 minutes for the first fifth, and the time per line no longer grows.
+  took 11 seconds, where the first 22,000 had taken over nine minutes, and the time per line no longer grows.
 
 ### Fixed
 
