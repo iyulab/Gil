@@ -5,6 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Gil\Gil.csproj" />
     <ProjectReference Include="..\..\src\Gil.IronHive\Gil.IronHive.csproj" />
+    <ProjectReference Include="..\..\src\Gil.Sqlite\Gil.Sqlite.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

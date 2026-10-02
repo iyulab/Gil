@@ -3,6 +3,7 @@
     <Project Path="src/Gil.Abstractions/Gil.Abstractions.csproj" />
     <Project Path="src/Gil/Gil.csproj" />
     <Project Path="src/Gil.IronHive/Gil.IronHive.csproj" />
+    <Project Path="src/Gil.Sqlite/Gil.Sqlite.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Gil.Tests/Gil.Tests.csproj" />

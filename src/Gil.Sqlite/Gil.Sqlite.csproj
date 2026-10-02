@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Gil.Telemetry</RootNamespace>
+    <Description>Gil's telemetry, habit statistics, promotion and review logs in a single SQLite file whose tables are a contract other tools read directly.</Description>
+    <PackageTags>$(PackageTags);sqlite;telemetry</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gil\Gil.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Gil.Tests" />
+  </ItemGroup>
+</Project>

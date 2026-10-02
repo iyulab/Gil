@@ -5,6 +5,15 @@ with what to do.
 
 ## Unreleased
 
+### Breaking
+
+- **`SqliteTelemetryStore` moved to its own package, `Gil.Sqlite`; `Gil` no longer depends on SQLite.** A consumer that
+  kept no telemetry — only memories and the form resolver, say — still received `Microsoft.Data.Sqlite` and its native
+  library, which a self-contained or Native AOT publish then shipped beside the executable unused. The store keeps its
+  namespace (`Gil.Telemetry`), its constructor and its file layout, so existing files open as before. What to do: if you
+  use `SqliteTelemetryStore`, add `dotnet add package Gil.Sqlite`. If you excluded SQLite's native assets yourself to keep
+  them out of a publish (a direct `SQLitePCLRaw` reference with `ExcludeAssets`), remove that reference.
+
 ### Changed
 
 - **A `FieldMemory` lookup costs as much as a key has values, however long its history.** Every settlement used to send
