@@ -49,7 +49,7 @@ public static class ThresholdSelection
     /// <param name="memory">An empty memory of the kind in use; the replay fills it. Never the one serving suggestions.</param>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
-    /// <param name="documents">Settled documents, in any order.</param>
+    /// <param name="documents">Settled documents, in any order. One settled more than once under the same id is asked about each time without its earlier version as evidence, as a suggestion for a saved document passes over it.</param>
     /// <param name="targetPrecision">The share of answers that must match, in (0, 1].</param>
     /// <param name="minimumAnswered">
     /// The fewest answers a precision may rest on. There is no default: a precision from a handful of answers is noise,
@@ -86,7 +86,7 @@ public static class ThresholdSelection
     /// <param name="memory">An empty memory of the kind in use; the replay fills it. Never the one serving suggestions.</param>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
-    /// <param name="documents">Settled documents, in any order.</param>
+    /// <param name="documents">Settled documents, in any order. One settled more than once under the same id is asked about each time without its earlier version as evidence, as a suggestion for a saved document passes over it.</param>
     /// <param name="targetPrecision">The share of answers that must match, in (0, 1], for each layer.</param>
     /// <param name="minimumAnswered">The fewest answers a precision may rest on, for each layer; the application's call.</param>
     /// <param name="cancellationToken">Cancels the replay.</param>
@@ -135,7 +135,7 @@ public static class ThresholdSelection
     /// <param name="memory">An empty field memory configured as the one in use; the replay fills it. Never the one serving suggestions.</param>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
-    /// <param name="documents">Settled documents, in any order.</param>
+    /// <param name="documents">Settled documents, in any order. One settled more than once under the same id is asked about each time without its earlier version as evidence, as a suggestion for a saved document passes over it.</param>
     /// <param name="targetPrecision">The share of answers that must match, in (0, 1].</param>
     /// <param name="minimumAnswered">The fewest answers a precision may rest on; the application's call, as for similarity.</param>
     public static ThresholdReplay SelectKeyThreshold(
@@ -163,6 +163,7 @@ public static class ThresholdSelection
                 continue;
             }
 
+            memory.Remove(form.Name, document.DocumentId); // a document settled again is not its own evidence
             if (memory.Count(form.Name) > 0)
             {
                 lookups++;
@@ -198,6 +199,7 @@ public static class ThresholdSelection
         var steps = new List<Step>();
         var remembered = 0;
         var cases = new Dictionary<string, string>(StringComparer.Ordinal); // case → the document representing it
+        var caseOf = new Dictionary<string, string>(StringComparer.Ordinal); // document → the case it represents
         var ordered = documents
             .OrderBy(d => d.SettledAt)
             .ThenBy(d => d.DocumentId, StringComparer.Ordinal); // the form resolver's order: later wins, then the larger id
@@ -206,6 +208,15 @@ public static class ThresholdSelection
             if (!document.Values.TryGetValue(field, out var settled))
             {
                 continue;
+            }
+
+            // A document settled again is not its own evidence, as a suggestion for a saved document passes over it.
+            fieldMemory?.Remove(form.Name, document.DocumentId);
+            if (caseOf.Remove(document.DocumentId, out var own))
+            {
+                memory.Forget(task, document.DocumentId);
+                cases.Remove(own);
+                remembered--;
             }
 
             var keyLooked = fieldMemory is not null && fieldMemory.Count(form.Name) > 0;
@@ -224,9 +235,12 @@ public static class ThresholdSelection
             if (cases.TryGetValue(key, out var earlier))
             {
                 memory.Forget(task, earlier);
+                caseOf.Remove(earlier);
+                remembered--;
             }
 
             cases[key] = document.DocumentId;
+            caseOf[document.DocumentId] = key;
             await memory.RememberAsync(task, document.DocumentId, evidence, settled, traceId, cancellationToken).ConfigureAwait(false);
             remembered++;
         }

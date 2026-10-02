@@ -249,6 +249,39 @@ public sealed class KeyThresholdTests
     }
 
     [Fact]
+    public async Task A_document_settled_again_is_not_its_own_evidence_in_the_replay()
+    {
+        // Every request is saved twice under its own id, unchanged, and its team is drawn at random: nothing but the
+        // request itself predicts it. A suggestion for a saved document passes over its saved version, so neither
+        // layer can answer these well, and the replay must not find otherwise by asking the second save about the first.
+        var random = new Random(5);
+        string[] teams = ["network", "facilities", "security", "accounts", "hardware"];
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("summary", FieldRole.Observed),
+                new FieldDefinition("team", FieldRole.Judged),
+            ],
+            PromptLanguage.English);
+        var history = Enumerable.Range(1, 100).SelectMany(i =>
+        {
+            var values = new Dictionary<string, string> { ["summary"] = $"request {i} about item {i * 7}", ["team"] = teams[random.Next(teams.Length)] };
+            return new[]
+            {
+                new SettledDocument($"r{i}", values, DateTimeOffset.UnixEpoch.AddMinutes(2 * i)),
+                new SettledDocument($"r{i}", values, DateTimeOffset.UnixEpoch.AddMinutes((2 * i) + 1)),
+            };
+        }).ToList();
+
+        var key = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), form, "team", history, 0.8, 10);
+        var similar = await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", history, 0.8, 10, Ct);
+
+        key.Chosen.Should().BeNull(); // no request's summary is seen twice under different ids
+        similar.Chosen.Should().BeNull();
+        similar.MostPrecise!.Precision.Should().BeLessThan(0.5); // the nearest other request, not the saved version
+    }
+
+    [Fact]
     public async Task A_key_below_the_threshold_is_a_guess_and_still_keeps_the_model_out()
     {
         var form = new FormDefinition(

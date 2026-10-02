@@ -390,6 +390,13 @@ backed by settled judged fields in one of the streams. Wider statistical margins
 precision a field actually delivers, check it on your own documents: choose on those settled up to a date and count
 the answers on those settled after it.
 
+Settle a record that arrives again — a retransmission, a re-save — under the same document id. The memories keep one
+version per id, and the replay asks a document settled again without its earlier version, as a suggestion for a saved
+document does. Under a new id the copy is new evidence: copies answer each other in the replay, and the threshold
+promises far more than other documents get. Replaying a public stream in which about half the documents arrived twice,
+copies under new ids made the key layer answer six times as often with 0.67 right against a promise of 0.91; under
+the same ids, it answered as if no copy had arrived.
+
 The two layers answer different kinds of documents. The key layer answers where a value the document already has
 decides the field. The similar document layer answers the rest, which are harder. A form whose judged fields rest only
 on observed fields (`DependsOn` naming observed fields alone) gets most of its answers from similar documents. In a

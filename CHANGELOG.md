@@ -3,6 +3,17 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Fixed
+
+- **Threshold selection no longer lets a document settled again be its own evidence.** `SelectKeyThreshold`,
+  `SelectAsync` and `SelectLayersAsync` replay every settlement they are given; a document given twice under the same
+  id — saved, then saved again — was asked about with its earlier version still remembered, so it answered itself and
+  the replay promised more than suggestions deliver, since a suggestion for a saved document passes over its saved
+  version. The replay now drops a document's earlier version before asking about the next. Results are unchanged when
+  every id appears once.
+
 ## 0.9.0
 
 ### Breaking
