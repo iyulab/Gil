@@ -381,9 +381,10 @@ var layers = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new L
 var team = form.Field("team") with { KeyThreshold = layers.Key.Chosen?.Threshold, MemoryThreshold = layers.Memory.Chosen?.Threshold };
 ```
 
-The replay looks each document up with all of its other values, while a live session often knows only some of them,
-so the precision it reports is an upper estimate for early fields. It can be optimistic for fields settled with all of
-their evidence too. `targetPrecision` is checked on the documents the threshold is chosen on. Where settled documents
+The replay looks each field up with the values that had arrived before it was settled — what its last suggestion was
+made from. `Snapshot()` records that order in `SettledDocument.Arrival`; save it with the document. Without it, observed
+values count as there from the start and judged fields as settled in the form's order. Even so, the precision a replay
+reports can be optimistic. `targetPrecision` is checked on the documents the threshold is chosen on. Where settled documents
 come in batches — several at once from one source, alike in their observed values — whether a near-identical
 document's value is right tends to hold or fail for the whole batch. The replay then sees fewer independent cases than
 it counts. Replaying two public streams, thresholds chosen for a target of 0.8 answered right 0.63 to 0.74 of the time

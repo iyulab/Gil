@@ -132,4 +132,74 @@ public sealed class ThresholdSelectionTests
         (choice.Chosen!.Answered, choice.Lookups, choice.Chosen.Precision).Should().Be((2, 5, 1.0)); // only the two near repeats are answered
         choice.Chosen.Threshold.Should().BeGreaterThan(0.3);
     }
+
+    /// <summary>Two judged fields that are evidence for each other: a team, then a priority.</summary>
+    private static readonly FormDefinition Triage = new(
+        "triage",
+        [
+            new FieldDefinition("summary", FieldRole.Observed),
+            new FieldDefinition("team", FieldRole.Judged),
+            new FieldDefinition("priority", FieldRole.Judged),
+        ],
+        PromptLanguage.English);
+
+    private static SettledDocument Triaged(string id, string summary, string team, string priority, params string[]? arrival) =>
+        new(id, new Dictionary<string, string> { ["summary"] = summary, ["team"] = team, ["priority"] = priority }, At(id),
+            arrival is { Length: > 0 } ? arrival : null);
+
+    [Fact]
+    public async Task A_field_is_asked_about_with_the_values_that_arrived_before_it_and_remembered_with_all_of_them()
+    {
+        var documents = new[]
+        {
+            Triaged("d1", "vpn drops", "network", "high", "summary", "team", "priority"),
+            Triaged("d2", "vpn slow", "network", "low", "summary", "priority", "team"), // the priority was settled first
+        };
+
+        var forTeam = new ScriptedMemory([null]);
+        await ThresholdSelection.SelectAsync(forTeam, Triage, "team", documents, 0.9, minimumAnswered: 1, Ct);
+        var forPriority = new ScriptedMemory([null]);
+        await ThresholdSelection.SelectAsync(forPriority, Triage, "priority", documents, 0.9, minimumAnswered: 1, Ct);
+
+        forTeam.Log.Should().Equal(
+            "remember d1=network",
+            "lookup triage/team [summary: vpn slow\npriority: low]", // the priority was there when the team was settled
+            "remember d2=network");
+        forPriority.Log.Should().Equal(
+            "remember d1=high",
+            "lookup triage/priority [summary: vpn slow]", // the team was not
+            "remember d2=low");
+    }
+
+    [Fact]
+    public async Task Without_an_arrival_order_the_observed_values_come_first_and_the_judged_ones_in_the_form_order()
+    {
+        var documents = new[] { Triaged("d1", "vpn drops", "network", "high"), Triaged("d2", "vpn slow", "network", "low") };
+
+        var forTeam = new ScriptedMemory([null]);
+        await ThresholdSelection.SelectAsync(forTeam, Triage, "team", documents, 0.9, minimumAnswered: 1, Ct);
+        var forPriority = new ScriptedMemory([null]);
+        await ThresholdSelection.SelectAsync(forPriority, Triage, "priority", documents, 0.9, minimumAnswered: 1, Ct);
+
+        forTeam.Log[1].Should().Be("lookup triage/team [summary: vpn slow]");
+        forPriority.Log[1].Should().Be("lookup triage/priority [summary: vpn slow\nteam: network]");
+    }
+
+    [Fact]
+    public void A_key_that_arrived_after_the_field_does_not_answer_for_it()
+    {
+        // The team decides the priority outright, but it is always settled after the priority: its key cannot have helped.
+        var arrived = Enumerable.Range(1, 40)
+            .Select(i => Triaged($"d{i}", "printer", i % 2 == 0 ? "network" : "facilities", i % 2 == 0 ? "high" : "low", "summary", "priority", "team"))
+            .ToList();
+        var withoutTeam = arrived
+            .Select(d => d with { Values = d.Values.Where(v => v.Key != "team").ToDictionary(v => v.Key, v => v.Value), Arrival = null })
+            .ToList();
+
+        var replayed = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), Triage, "priority", arrived, 0.9, minimumAnswered: 5);
+        var blind = ThresholdSelection.SelectKeyThreshold(new FieldMemory(), Triage, "priority", withoutTeam, 0.9, minimumAnswered: 5);
+
+        replayed.Should().Be(blind);
+        replayed.Chosen.Should().BeNull(); // the summary alone cannot tell high from low
+    }
 }

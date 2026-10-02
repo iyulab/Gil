@@ -91,9 +91,11 @@ public sealed class FormSession
 
     /// <summary>
     /// The document's values as they stand — observed and settled — which is what the application saves, with the time a
-    /// field was last accepted or corrected (or the time the document was opened with, if none was since).
+    /// field was last accepted or corrected (or the time the document was opened with, if none was since), and the order
+    /// the values arrived in, by which choosing thresholds replays the document.
     /// </summary>
-    public SettledDocument Snapshot() => new(DocumentId, new Dictionary<string, string>(_values, StringComparer.Ordinal), _settledAt);
+    public SettledDocument Snapshot() =>
+        new(DocumentId, new Dictionary<string, string>(_values, StringComparer.Ordinal), _settledAt, [.. _arrival]);
 
     private void Set(string field, string? value)
     {

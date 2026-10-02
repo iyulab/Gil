@@ -3,6 +3,22 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Breaking
+
+- **Threshold replays ask about each judged field with the values that had arrived before it, not the whole settled
+  document.** Where judged fields are evidence for each other (a field without `DependsOn`), a field's last suggestion
+  is made before the fields settled after it have values, yet the replays (`SelectKeyThreshold`, `SelectAsync`,
+  `SelectLayersAsync`) looked it up with all of them — so the precision a chosen threshold promised was measured on more
+  evidence than suggestions get, and suggestions fell short of it. `SettledDocument` gains `Arrival`, the order the
+  document's values arrived in, and `FormSession.Snapshot()` fills it in; a replay looks each field up with the values
+  ahead of it in that order and still remembers each document with all its values, as the form resolver does. Without
+  an order, observed values count as there from the start and judged ones as settled in the form's order. What to do:
+  save `Arrival` with a snapshot and pass it back when choosing thresholds, or leave it out where the form order is the
+  order people fill in; then choose thresholds again. A form whose judged fields depend only on observed fields replays
+  as before, unless an observed value changed after a field was settled. Code that constructs `SettledDocument` by position compiles unchanged; recompile against this version.
+
 ## 0.10.0
 
 ### Breaking

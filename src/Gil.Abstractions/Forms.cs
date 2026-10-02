@@ -167,7 +167,18 @@ public sealed record FormDefinition
 /// When a judged value of the document was last settled. Where settled documents disagree, the later settlement wins, so
 /// memory reaches the same state whatever order documents arrive in. A file's last write time serves.
 /// </param>
-public sealed record SettledDocument(string DocumentId, IReadOnlyDictionary<string, string> Values, DateTimeOffset SettledAt);
+/// <param name="Arrival">
+/// The fields with a value, in the order their current values arrived, oldest first — what a form session's snapshot
+/// gives. Choosing thresholds replays each judged field with only the values that had arrived before it, which is what
+/// its last suggestion was made from. A field the list leaves out counts as there from the start. Null when the order is
+/// unknown: the observed values are then taken as there from the start and the judged ones as settled in the form's
+/// order. Memory does not use it — a settled document is remembered with all its values.
+/// </param>
+public sealed record SettledDocument(
+    string DocumentId,
+    IReadOnlyDictionary<string, string> Values,
+    DateTimeOffset SettledAt,
+    IReadOnlyList<string>? Arrival = null);
 
 /// <summary>The layer a suggested value came from.</summary>
 public enum FieldSource

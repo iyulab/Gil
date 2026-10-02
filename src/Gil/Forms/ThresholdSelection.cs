@@ -37,8 +37,9 @@ public static class ThresholdSelection
 {
     /// <summary>
     /// Replays the documents in the order they were settled: each is looked up in a memory holding only the documents
-    /// settled before it, by the evidence lines a session would send, and then remembered — replacing an earlier document
-    /// of the same case, as the form resolver does. Chooses the lowest threshold down to which every band of answers
+    /// settled before it, by the evidence lines its last suggestion was made from — the values that had arrived before
+    /// the field (<see cref="SettledDocument.Arrival"/>) — and then remembered with all its values, replacing an earlier
+    /// document of the same case, as the form resolver does. Chooses the lowest threshold down to which every band of answers
     /// reaches <paramref name="targetPrecision"/> — precision fitted as a non-decreasing function of similarity, so a weak
     /// band is not admitted on the strength of good answers above it — with at least <paramref name="minimumAnswered"/>
     /// answers in all. When no threshold does, <see cref="ThresholdReplay.Chosen"/> is null and memory should not answer
@@ -124,7 +125,8 @@ public static class ThresholdSelection
     /// <summary>
     /// Chooses <see cref="FieldDefinition.KeyThreshold"/> the same way: replays the documents in the order they were
     /// settled, asking a field memory holding only the documents settled before each for the best-ranked value under the
-    /// document's keys, then putting the document. Chooses the lowest score down to which every band of the values
+    /// keys of the values that had arrived before the field (<see cref="SettledDocument.Arrival"/>), then putting the
+    /// whole document. Chooses the lowest score down to which every band of the values
     /// asked about reaches <paramref name="targetPrecision"/>, as for similarity, with at least
     /// <paramref name="minimumAnswered"/> of them in all; when no score does, <see cref="ThresholdReplay.Chosen"/> is
     /// null — the field's keys then should not answer on their own. A document whose keys were never seen before is a lookup without an answer. Repeats of
@@ -167,7 +169,7 @@ public static class ThresholdSelection
             if (memory.Count(form.Name) > 0)
             {
                 lookups++;
-                if (memory.First(form, field, document.Values, settled) is { } first)
+                if (memory.First(form, field, Before(form, document, field), settled) is { } first)
                 {
                     matches.Add((first.Score, first.Matches));
                 }
@@ -220,13 +222,16 @@ public static class ThresholdSelection
                 remembered--;
             }
 
+            // Asked with what the field's last suggestion saw; remembered, below, with everything, as the resolver remembers.
+            var before = Before(form, document, field);
             var keyLooked = fieldMemory is not null && fieldMemory.Count(form.Name) > 0;
-            var first = keyLooked ? fieldMemory!.First(form, field, document.Values, settled) : null;
+            var first = keyLooked ? fieldMemory!.First(form, field, before, settled) : null;
             var evidence = FormResolver.Evidence(form, field, document.Values);
             (double, bool)? match = null;
             if (remembered > 0)
             {
-                var (found, _) = await memory.LookupAsync(task, evidence, traceId, cancellationToken).ConfigureAwait(false);
+                var asked = FormResolver.Evidence(form, field, before);
+                var (found, _) = await memory.LookupAsync(task, asked, traceId, cancellationToken).ConfigureAwait(false);
                 // As a suggestion does, a nearest document whose value lies outside the field's domain offers nothing.
                 match = found is null || !definition.Admits(found.Answer) ? null : (found.Similarity, found.Answer == settled);
             }
@@ -248,6 +253,63 @@ public static class ThresholdSelection
         }
 
         return steps;
+    }
+
+    /// <summary>
+    /// The document's values that had arrived before <paramref name="field"/> was settled — what its last suggestion was
+    /// made from. <see cref="SettledDocument.Arrival"/> says how an unknown order and fields it leaves out are read.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> Before(FormDefinition form, SettledDocument document, string field)
+    {
+        int Rank(string name)
+        {
+            if (document.Arrival is { } arrival)
+            {
+                var at = IndexOf(arrival, name);
+                return at >= 0 ? at : name == field ? int.MaxValue : -1;
+            }
+
+            var index = IndexOf(form.Fields, name); // a value of no field of the form is no evidence anyway
+            return index < 0 || form.Fields[index].Role == FieldRole.Observed ? -1 : index;
+        }
+
+        var own = Rank(field);
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, value) in document.Values)
+        {
+            if (name != field && Rank(name) < own)
+            {
+                values[name] = value;
+            }
+        }
+
+        return values;
+    }
+
+    private static int IndexOf(IReadOnlyList<string> names, string name)
+    {
+        for (var i = 0; i < names.Count; i++)
+        {
+            if (names[i] == name)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int IndexOf(IReadOnlyList<FieldDefinition> fields, string name)
+    {
+        for (var i = 0; i < fields.Count; i++)
+        {
+            if (fields[i].Name == name)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>The similarity choice over the given lookups: every one counts, answered or not.</summary>

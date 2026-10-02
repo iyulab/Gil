@@ -108,6 +108,7 @@ public sealed class FormSessionTests
         {
             ["summary"] = "vpn drops every ten minutes", ["component"] = "vpn", ["team"] = "network", ["severity"] = "high",
         });
+        session.Snapshot().Arrival.Should().Equal("component", "summary", "team", "severity"); // a changed value moves to the end
         foreach (var field in new[] { "severity", "team" })
         {
             var known = new Dictionary<string, string> { ["component"] = "vpn", ["summary"] = "vpn drops" };
