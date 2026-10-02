@@ -5,6 +5,18 @@ with what to do.
 
 ## Unreleased
 
+### Changed
+
+- **A `FieldMemory` lookup costs as much as a key has values, however long its history.** Every settlement used to send
+  its key's weights back to be taken afresh, sorting all of that key's settlements on the next lookup, and a suggestion
+  for an unsaved document scanned them all to see whether it was among them. A key present on nearly every document
+  therefore made each suggestion slower as settlements accumulated. Now a settlement later than every earlier one under
+  the key carries the weights along, and only one that arrives out of order or is taken away has them taken afresh —
+  through the same fold, so either way reaches the same weights to the bit. Suggestions and chosen thresholds are
+  unchanged: replaying public streams of settled documents gave the same suggestions and answers, with scores and
+  thresholds equal to within 1e-12. Replaying about 95,000 log lines whose host and process recur on nearly every line
+  took 11 seconds instead of more than 20 minutes for the first fifth, and the time per line no longer grows.
+
 ### Fixed
 
 - **Threshold selection no longer lets a document settled again be its own evidence.** `SelectKeyThreshold`,

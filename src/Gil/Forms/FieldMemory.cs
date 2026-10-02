@@ -243,10 +243,20 @@ public sealed class FieldMemory
         }
     }
 
-    /// <summary>The settlements under one key (or overall), weighed by how many came after each.</summary>
+    /// <summary>
+    /// The settlements under one key (or overall), weighed by how many came after each. The weights are one fold over the
+    /// settlements from the earliest: each settlement leaves every earlier weight one step lighter and adds its own. A
+    /// settlement later than every one before it — what a stream of new documents brings — continues the fold, so a
+    /// lookup costs as much as the key has values however long its history; one that arrives out of order, or one taken
+    /// away, has the fold run again from the earliest. Either way the same settlements reach the same weights to the bit.
+    /// A document settles at most once under a key (<see cref="FieldMemory.Put"/> replaces what it contributed).
+    /// </summary>
     private sealed class Counts(double recencyDecay)
     {
         private readonly List<Settled> _settled = [];
+        private readonly HashSet<string> _documents = new(StringComparer.Ordinal);
+        private Fold _fold = new(recencyDecay);
+        private bool _stale;
         private (string Value, double Share, double Strength, DateTimeOffset Latest)[]? _shares;
 
         public int Total => _settled.Count;
@@ -254,38 +264,109 @@ public sealed class FieldMemory
         public void Add(Settled settled)
         {
             _settled.Add(settled);
+            _documents.Add(settled.DocumentId);
             _shares = null;
+            if (_stale || (_fold.Newest is { } newest && !Later(settled, newest)))
+            {
+                _stale = true; // out of order: its weight depends on how many came after it
+                return;
+            }
+
+            _fold.Add(settled);
         }
 
         public void Subtract(Settled settled)
         {
             _settled.Remove(settled);
+            _documents.Remove(settled.DocumentId);
             _shares = null;
+            _stale = true;
         }
 
         /// <summary>
         /// Each value's share of the weighed total, its strength (its weight over the total plus one) and when it was last
         /// settled, largest share first; ties to the one settled most recently, then to the ordinally smaller value.
-        /// Weighed afresh after a change, since a settlement that arrives late may belong anywhere in the order, and
-        /// without caching when a document is left out.
+        /// Without caching when a document is left out.
         /// </summary>
-        public (string Value, double Share, double Strength, DateTimeOffset Latest)[] Shares(string? excluding = null) =>
-            excluding is not null && _settled.Exists(s => s.DocumentId == excluding)
-                ? Weigh(_settled.Where(s => s.DocumentId != excluding))
-                : _shares ??= Weigh(_settled);
-
-        private (string Value, double Share, double Strength, DateTimeOffset Latest)[] Weigh(IEnumerable<Settled> settlements)
+        public (string Value, double Share, double Strength, DateTimeOffset Latest)[] Shares(string? excluding = null)
         {
-            var weights = new Dictionary<string, (double Weight, DateTimeOffset Latest)>(StringComparer.Ordinal);
-            var (weight, total) = (1.0, 0.0);
-            foreach (var settled in settlements.OrderByDescending(s => s.At).ThenByDescending(s => s.DocumentId, StringComparer.Ordinal))
+            if (excluding is not null && _documents.Contains(excluding))
             {
-                var (sum, latest) = weights.GetValueOrDefault(settled.Value, (0, settled.At));
-                weights[settled.Value] = (sum + weight, latest); // newest first, so the first time seen is the latest
-                total += weight;
-                weight *= recencyDecay;
+                return Weigh(_settled.Where(s => s.DocumentId != excluding)).Shares();
             }
 
+            if (_stale)
+            {
+                _fold = Weigh(_settled);
+                _stale = false;
+            }
+
+            return _shares ??= _fold.Shares();
+        }
+
+        /// <summary>Whether <paramref name="a"/> comes after <paramref name="b"/> in the order settlements are weighed in.</summary>
+        private static bool Later(Settled a, Settled b) =>
+            a.At > b.At || (a.At == b.At && string.CompareOrdinal(a.DocumentId, b.DocumentId) > 0);
+
+        private Fold Weigh(IEnumerable<Settled> settlements)
+        {
+            var fold = new Fold(recencyDecay);
+            foreach (var settled in settlements.OrderBy(s => s.At).ThenBy(s => s.DocumentId, StringComparer.Ordinal))
+            {
+                fold.Add(settled);
+            }
+
+            return fold;
+        }
+    }
+
+    /// <summary>
+    /// The weights of settlements added from the earliest. The latest settlement weighs exactly 1 and is held apart; every
+    /// earlier one is a raw amount times a common scale, so making them all one step lighter is one multiplication of the
+    /// scale. The raw amounts are folded back into the scale before it gets too small to hold.
+    /// </summary>
+    private sealed class Fold(double recencyDecay)
+    {
+        private readonly Dictionary<string, (double Raw, DateTimeOffset Latest)> _raw = new(StringComparer.Ordinal);
+        private double _rawTotal;
+        private double _scale = 1;
+
+        public Settled? Newest { get; private set; }
+
+        public void Add(Settled settled)
+        {
+            if (Newest is { } previous)
+            {
+                var amount = 1 / _scale; // the previous latest joins the earlier ones at weight 1, then all grow lighter
+                _raw[previous.Value] = (_raw.GetValueOrDefault(previous.Value).Raw + amount, previous.At);
+                _rawTotal += amount;
+                _scale *= recencyDecay;
+                if (_scale < 1e-150)
+                {
+                    foreach (var value in _raw.Keys.ToList())
+                    {
+                        var (raw, latest) = _raw[value];
+                        _raw[value] = (raw * _scale, latest);
+                    }
+
+                    (_rawTotal, _scale) = (_rawTotal * _scale, 1);
+                }
+            }
+
+            Newest = settled;
+        }
+
+        public (string Value, double Share, double Strength, DateTimeOffset Latest)[] Shares()
+        {
+            if (Newest is not { } newest)
+            {
+                return [];
+            }
+
+            var weights = _raw.ToDictionary(w => w.Key, w => (Weight: w.Value.Raw * _scale, w.Value.Latest), StringComparer.Ordinal);
+            var (own, _) = weights.GetValueOrDefault(newest.Value);
+            weights[newest.Value] = (own + 1, newest.At);
+            var total = (_rawTotal * _scale) + 1;
             return [.. weights
                 .Select(w => (Value: w.Key, Share: w.Value.Weight / total, Strength: w.Value.Weight / (total + 1), w.Value.Latest))
                 .OrderByDescending(w => w.Share)

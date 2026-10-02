@@ -213,6 +213,31 @@ public sealed class FieldMemoryTests
     }
 
     [Fact]
+    public void A_long_history_weighs_the_same_however_it_was_put()
+    {
+        // Seven thousand settlements under one key: put in the order they were settled, the weights are carried along;
+        // put shuffled, they are taken afresh. Both must agree to the bit, past the point where the earliest weights
+        // would no longer fit a double unscaled.
+        var random = new Random(11);
+        string[] severities = ["low", "medium", "high"];
+        var documents = Enumerable.Range(1, 7000)
+            .Select(i => new SettledDocument(
+                $"d{i}",
+                new Dictionary<string, string> { ["component"] = "vpn", ["severity"] = severities[random.Next(i < 6000 ? 3 : 2)] },
+                DateTimeOffset.UnixEpoch.AddMinutes(i)))
+            .ToList();
+
+        var carried = new FieldMemory();
+        documents.ForEach(d => carried.Put(Ticket, d));
+        var afresh = new FieldMemory();
+        documents.OrderBy(_ => random.Next()).ToList().ForEach(d => afresh.Put(Ticket, d));
+
+        var known = Known(("component", "vpn"));
+        carried.Rank(Ticket, "severity", known, 3).Should().Equal(afresh.Rank(Ticket, "severity", known, 3));
+        carried.Rank(Ticket, "severity", known, 3)[0].Value.Should().NotBe("high"); // the last thousand never settled it
+    }
+
+    [Fact]
     public void Forms_are_kept_apart()
     {
         var other = Ticket with { };
