@@ -5,6 +5,21 @@ with what to do.
 
 ## Unreleased
 
+### Breaking
+
+- **The key layer ranks and trusts values by one score: the sum of their strengths under the document's keys.** A
+  value's strength under a key is still its weighted count there over the key's weighted total plus one, so a key settled
+  once adds at most 0.5. Values were ranked by the sum of their plain shares, but trusted by the strength of their
+  strongest key alone, so the value most likely right was not always the one the threshold looked at, and agreement
+  between keys counted for nothing. Now the same score ranks the values, is compared with `KeyThreshold`, is what
+  `SelectKeyThreshold` and `SelectLayersAsync` replay, and is the keyed candidates' `FieldCandidate.Score`; `Evidence`
+  names the key the value is strongest under. Replaying a public stream of settled documents with thresholds chosen for a
+  precision of 0.8, the key layer answered about three times as often (641 answers against 215) at the same precision
+  (0.81 against 0.77), and the first candidate was right slightly more often. **What to do**: a `KeyThreshold` chosen
+  before this release is on the old scale — the new score reaches up to the number of keys — so choose it again with
+  `SelectKeyThreshold` (or `SelectLayersAsync`) right after upgrading; until then it is too low and the key layer
+  answers too readily. A threshold set by hand keeps its meaning for a document with a single key.
+
 ### Changed
 
 - **A `LexicalMemory` lookup reads only the n-grams a row shares with the request.** Every n-gram lists the rows that

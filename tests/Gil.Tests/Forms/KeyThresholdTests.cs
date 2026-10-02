@@ -271,7 +271,7 @@ public sealed class KeyThresholdTests
 
         (strong.Answered, strong.Candidates[0].Trusted).Should().Be((true, true));
         (weak.Answered, weak.Source, weak.Candidates[0]).Should().Be(
-            (false, FieldSource.SettledFieldMemory, new FieldCandidate("facilities", 1.0, FieldSource.SettledFieldMemory, "component: printer", Trusted: false)));
+            (false, FieldSource.SettledFieldMemory, new FieldCandidate("facilities", 0.5, FieldSource.SettledFieldMemory, "component: printer", Trusted: false)));
         model.Asked.Should().Be(0); // a value the document's own keys back, however weakly, beats a model's guess
         (sink.Traces[weak.TraceId].Outcome!.Mode, sink.Traces[weak.TraceId].Outcome!.Output).Should().Be(("abstain", null));
         (sink.Traces[strong.TraceId].Outcome!.Mode, sink.Traces[strong.TraceId].Outcome!.Output).Should().Be(("field_memory", "network"));

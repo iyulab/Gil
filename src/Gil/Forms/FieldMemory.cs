@@ -5,7 +5,8 @@ namespace Gil.Forms;
 /// <summary>
 /// Suggests a judged field's value from how often each value was settled alongside the values the document's other fields
 /// have — no model, no call, energy 0. Each other field's value is a key; a value's score is the sum over the document's
-/// keys of its share of the settlements made under that key. When no key has been seen, the field's most frequently
+/// keys of its strength under that key: its weighted count there over the key's weighted total plus one. The same score
+/// ranks the values and decides whether the first one is trusted. When no key has been seen, the field's most frequently
 /// settled values stand in.
 /// </summary>
 /// <remarks>
@@ -81,10 +82,10 @@ public sealed class FieldMemory
 
     /// <summary>
     /// The <paramref name="count"/> values most likely for <paramref name="field"/> given the values known so far, best
-    /// first: the values settled under the known keys (with the key that backs each most as its evidence), then, in the
-    /// places left, the field's most frequently settled values (without evidence). Ties go to the value settled most
-    /// recently, then to the ordinally smaller value, in both parts, so the order documents arrived in never matters.
-    /// The keyed values are trusted when the first one's strength reaches the field's
+    /// first: the values settled under the known keys by their score (with the key that backs each most strongly as its
+    /// evidence), then, in the places left, the field's most frequently settled values by their share (without evidence).
+    /// Ties go to the value settled most recently, then to the ordinally smaller value, in both parts, so the order
+    /// documents arrived in never matters. The keyed values are trusted when the first one's score reaches the field's
     /// <see cref="FieldDefinition.KeyThreshold"/>; the most frequent values never are. Empty when nothing was settled.
     /// </summary>
     /// <param name="form">The form.</param>
@@ -104,7 +105,7 @@ public sealed class FieldMemory
         }
 
         var ranked = Keyed(index, form, definition, known, excluding);
-        var trusted = ranked.Count > 0 && definition.KeyThreshold is double threshold && ranked[0].Strength >= threshold;
+        var trusted = ranked.Count > 0 && definition.KeyThreshold is double threshold && ranked[0].Score >= threshold;
         var keyed = ranked
             .Take(count)
             .Select(s => new FieldCandidate(s.Value, s.Score, FieldSource.SettledFieldMemory, $"{s.Key.Field}: {s.Key.Value}", trusted));
@@ -115,10 +116,10 @@ public sealed class FieldMemory
     }
 
     /// <summary>
-    /// The strength of the best-ranked value settled under the known keys and whether it is <paramref name="value"/> — what
+    /// The score of the best-ranked value settled under the known keys and whether it is <paramref name="value"/> — what
     /// <see cref="FieldDefinition.KeyThreshold"/> is compared with; null when no known key was seen.
     /// </summary>
-    internal (double Strength, bool Matches)? First(FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string value)
+    internal (double Score, bool Matches)? First(FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string value)
     {
         if (!_forms.TryGetValue(form.Name, out var index))
         {
@@ -126,17 +127,17 @@ public sealed class FieldMemory
         }
 
         var ranked = Keyed(index, form, form.Field(field), known, excluding: null);
-        return ranked.Count > 0 ? (ranked[0].Strength, ranked[0].Value == value) : null;
+        return ranked.Count > 0 ? (ranked[0].Score, ranked[0].Value == value) : null;
     }
 
     /// <summary>
-    /// The values settled under the known keys, best first: by the sum of their shares under each key, then the latest
-    /// settlement, then ordinally. Each carries the key it has its largest share under and its greatest strength.
+    /// The values settled under the known keys, best first: by their score — the sum of their strengths under each key —
+    /// then the latest settlement, then ordinally. Each carries the key it is strongest under.
     /// </summary>
-    private List<(string Value, double Score, double Strength, Key Key)> Keyed(
+    private List<(string Value, double Score, Key Key)> Keyed(
         FormIndex index, FormDefinition form, FieldDefinition field, IReadOnlyDictionary<string, string> known, string? excluding)
     {
-        var scores = new Dictionary<string, (double Score, double Best, Key Key, double Strength, DateTimeOffset Latest)>(StringComparer.Ordinal);
+        var scores = new Dictionary<string, (double Score, double Strongest, Key Key, DateTimeOffset Latest)>(StringComparer.Ordinal);
         foreach (var key in Keys(form, field, known))
         {
             if (!index.Values.TryGetValue(new Slot(field.Name, key), out var counts))
@@ -144,11 +145,11 @@ public sealed class FieldMemory
                 continue;
             }
 
-            foreach (var (value, share, strength, latest) in counts.Shares(excluding))
+            foreach (var (value, _, strength, latest) in counts.Shares(excluding))
             {
-                var (score, best, strongest, most, last) = scores.GetValueOrDefault(value, (0, 0, default, 0, DateTimeOffset.MinValue));
-                (last, most) = (latest > last ? latest : last, Math.Max(most, strength));
-                scores[value] = share > best ? (score + share, share, key, most, last) : (score + share, best, strongest, most, last);
+                var (score, strongest, backing, last) = scores.GetValueOrDefault(value, (0, 0, default, DateTimeOffset.MinValue));
+                (backing, strongest) = strength > strongest ? (key, strength) : (backing, strongest);
+                scores[value] = (score + strength, strongest, backing, latest > last ? latest : last);
             }
         }
 
@@ -156,7 +157,7 @@ public sealed class FieldMemory
             .OrderByDescending(s => s.Value.Score)
             .ThenByDescending(s => s.Value.Latest)
             .ThenBy(s => s.Key, StringComparer.Ordinal)
-            .Select(s => (s.Key, s.Value.Score, s.Value.Strength, s.Value.Key))];
+            .Select(s => (s.Key, s.Value.Score, s.Value.Key))];
     }
 
     /// <summary>The keys the document's values give <paramref name="field"/>: every other field that supports it, with a short enough value.</summary>

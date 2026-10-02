@@ -27,19 +27,57 @@ public sealed class FieldMemoryTests
         values.ToDictionary(v => v.Field, v => v.Value);
 
     [Fact]
-    public void A_value_scores_the_sum_over_known_keys_of_its_share_under_each()
+    public void A_value_scores_the_sum_over_known_keys_of_its_strength_under_each()
     {
         var memory = new FieldMemory(recencyDecay: 1);
         memory.Put(Ticket, Doc("d1", ("component", "printer"), ("severity", "low"), ("team", "facilities")));
         memory.Put(Ticket, Doc("d2", ("component", "printer"), ("severity", "high"), ("team", "facilities")));
         memory.Put(Ticket, Doc("d3", ("component", "vpn"), ("severity", "high"), ("team", "network")));
 
-        // Keys for severity: component = printer (low 1/2, high 1/2) and team = facilities (low 1/2, high 1/2).
+        // Keys for severity: component = printer and team = facilities, each settled twice, low once and high once — a
+        // strength of 1 / (2 + 1) for each value under each key.
         var ranked = memory.Rank(Ticket, "severity", Known(("component", "Printer "), ("team", "facilities")), 3);
 
-        ranked.Select(c => (c.Value, c.Score)).Should().Equal(("high", 1.0), ("low", 1.0)); // a tie: ordinal order
+        ranked.Select(c => (c.Value, c.Score)).Should().Equal(("high", 2.0 / 3), ("low", 2.0 / 3)); // a tie: ordinal order
         ranked.Should().OnlyContain(c => c.Source == FieldSource.SettledFieldMemory);
         ranked[0].Evidence.Should().Be("component: printer"); // the key that backs the value most, as normalised
+    }
+
+    [Fact]
+    public void A_key_seen_more_often_outweighs_one_seen_once_however_pure_both_are()
+    {
+        var memory = new FieldMemory(recencyDecay: 1);
+        memory.Put(Ticket, Doc("d1", ("component", "disk"), ("team", "storage")));
+        memory.Put(Ticket, Doc("d2", ("component", "disk"), ("team", "storage")));
+        memory.Put(Ticket, Doc("d3", ("component", "disk"), ("team", "storage")));
+        memory.Put(Ticket, Doc("d4", ("summary", "slow"), ("team", "network")));
+
+        // Each key only ever saw one team; three settlements make component = disk the stronger evidence than the single
+        // one under summary = slow, although that one is the latest.
+        memory.Rank(Ticket, "team", Known(("component", "disk"), ("summary", "slow")), 3)
+            .Select(c => (c.Value, c.Score, c.Evidence)).Should().Equal(("storage", 0.75, "component: disk"), ("network", 0.5, "summary: slow"));
+    }
+
+    [Fact]
+    public void Keys_that_agree_are_trusted_where_each_alone_is_not()
+    {
+        var form = new FormDefinition(
+            "ticket",
+            [
+                new FieldDefinition("component", FieldRole.Observed),
+                new FieldDefinition("summary", FieldRole.Observed),
+                new FieldDefinition("team", FieldRole.Judged) { KeyThreshold = 0.9 },
+            ],
+            PromptLanguage.English);
+        var memory = new FieldMemory(recencyDecay: 1);
+        memory.Put(form, Doc("d1", ("component", "vpn"), ("team", "network")));
+        memory.Put(form, Doc("d2", ("summary", "slow"), ("team", "network")));
+
+        // Each key was settled once (0.5 each); together they reach the threshold, and the score that ranks is the one
+        // compared with it.
+        memory.Rank(form, "team", Known(("component", "vpn")), 1).Single().Trusted.Should().BeFalse();
+        memory.Rank(form, "team", Known(("component", "vpn"), ("summary", "slow")), 1).Single()
+            .Should().Be(new FieldCandidate("network", 1.0, FieldSource.SettledFieldMemory, "component: vpn", Trusted: true));
     }
 
     [Fact]
@@ -102,7 +140,7 @@ public sealed class FieldMemoryTests
         // summary = slow would split network/storage evenly, but it is not a declared dependency. The places left are
         // filled from the overall frequency, without evidence.
         memory.Rank(form, "team", Known(("component", "vpn"), ("summary", "slow")), 3)
-            .Select(c => (c.Value, c.Score, c.Evidence)).Should().Equal(("network", 1.0, "component: vpn"), ("storage", 2.0 / 3, null));
+            .Select(c => (c.Value, c.Score, c.Evidence)).Should().Equal(("network", 0.5, "component: vpn"), ("storage", 2.0 / 3, null));
     }
 
     [Fact]
@@ -116,7 +154,7 @@ public sealed class FieldMemoryTests
         memory.Rank(Ticket, "team", Known(("summary", "the screen goes dark after lunch")), 1)
             .Single().Should().Be(new FieldCandidate("network", 2.0 / 3, FieldSource.SettledFieldMemory, null, Trusted: false));
         memory.Rank(Ticket, "team", Known(("summary", "No  Signal")), 1)
-            .Single().Should().Be(new FieldCandidate("network", 1.0, FieldSource.SettledFieldMemory, "summary: no signal", Trusted: false));
+            .Single().Should().Be(new FieldCandidate("network", 2.0 / 3, FieldSource.SettledFieldMemory, "summary: no signal", Trusted: false));
     }
 
     [Fact]
@@ -129,7 +167,7 @@ public sealed class FieldMemoryTests
 
         memory.Count("ticket").Should().Be(1);
         memory.Rank(Ticket, "severity", Known(("component", "vpn")), 3)
-            .Select(c => (c.Value, c.Score)).Should().Equal(("high", 1.0));
+            .Select(c => (c.Value, c.Score)).Should().Equal(("high", 0.5)); // one settlement: 1 / (1 + 1)
 
         memory.Remove("ticket", "d1");
         memory.Count("ticket").Should().Be(0);

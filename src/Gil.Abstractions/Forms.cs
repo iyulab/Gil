@@ -45,10 +45,13 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     public double? MemoryThreshold { get; init; }
 
     /// <summary>
-    /// Strength at or above which values settled alongside the document's known values are suggested as backed by them.
+    /// Score at or above which values settled alongside the document's known values are suggested as backed by them.
     /// A value's strength under a key is its weighted count there divided by the key's weighted total plus one — how pure
-    /// the key is for it, discounted when the key was seen only a few times, so a key settled once is at most 0.5. The
-    /// best-ranked value's strongest key decides for the whole layer. Null offers those values only as guesses, after
+    /// the key is for it, discounted when the key was seen only a few times, so a key settled once adds at most 0.5. Its
+    /// score is the sum of its strengths under the document's keys, so it ranges up to the number of keys: a value that
+    /// several keys back scores higher than one that a single key backs as purely. The same score ranks the values, and
+    /// the best-ranked value's score decides for the whole layer. A threshold chosen before 0.9.0 measured the strongest
+    /// key alone and must be chosen again. Null offers those values only as guesses, after
     /// every layer that answers: a key that rarely decides the field, such as a choice among a handful of values that
     /// every document has, must not outrank a similar document that meets its threshold. Among guesses it comes first,
     /// before the field's most frequent value and the nearest document below its threshold. Choose it by replaying settled documents

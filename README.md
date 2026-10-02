@@ -300,7 +300,7 @@ var document = session.Snapshot();
 ```
 
 Each field is tried in a fixed order, and `FieldSuggestion.Source` says which layer the first candidate came from:
-1. Values settled alongside the values the document already has, when the key backing them is strong enough
+1. Values settled alongside the values the document already has, when the keys backing them score high enough
    (`KeyThreshold`).
 2. The value of a similar settled document, when the field sets `MemoryThreshold`, a document memory is given, and the
    document is similar enough.
@@ -318,10 +318,13 @@ the first candidate is an answer at all. When it is not, leave the field to the 
 not mark it as the suggestion. Listing guesses as unmarked choices the person may pick is another matter. Replaying a
 public stream of settled documents, showing the first guess that way saved about a third of the typing, even after
 charging for the time to read it, against about one percent for answers alone. The first guess was also wrong more often
-than right, though, and a value already filled in or highlighted is easily accepted without a look. A key's strength is
-how pure it is for the value, discounted when it was seen only a few times: a
-choice among a handful of values that every document has rarely decides another field, and without `KeyThreshold` its
-values are guesses, so it never outranks a similar document that meets its threshold.
+than right, though, and a value already filled in or highlighted is easily accepted without a look. A value's score
+adds up its strength under each of the document's keys — how pure the key is for it, discounted when the key was seen
+only a few times — so several keys that agree outweigh a single one, and the same score both ranks the values and is
+compared with `KeyThreshold`. Replaying a public stream of settled documents with thresholds chosen for a precision of
+0.8, this let the key layer answer about three times as often as trusting the strongest key alone, at the same
+precision. A choice among a handful of values that every document has rarely decides another field, and without
+`KeyThreshold` its values are guesses, so it never outranks a similar document that meets its threshold.
 
 To show what a similar document's candidate rests on, create the resolver with `similarDocumentCount`: each suggestion
 then carries `SimilarDocuments`, the most similar settled documents with their similarity and settled value, the

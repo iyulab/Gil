@@ -117,18 +117,18 @@ public static class ThresholdSelection
             keyed.Count,
             targetPrecision,
             minimumAnswered);
-        var left = steps.Where(s => s.Looked && !(key.Chosen is { } chosen && s.Key is { } first && first.Strength >= chosen.Threshold));
+        var left = steps.Where(s => s.Looked && !(key.Chosen is { } chosen && s.Key is { } first && first.Score >= chosen.Threshold));
         return new LayerThresholds(key, Similarity(left, targetPrecision, minimumAnswered));
     }
 
     /// <summary>
     /// Chooses <see cref="FieldDefinition.KeyThreshold"/> the same way: replays the documents in the order they were
     /// settled, asking a field memory holding only the documents settled before each for the best-ranked value under the
-    /// document's keys, then putting the document. Chooses the lowest strength down to which every band of the values
+    /// document's keys, then putting the document. Chooses the lowest score down to which every band of the values
     /// asked about reaches <paramref name="targetPrecision"/>, as for similarity, with at least
-    /// <paramref name="minimumAnswered"/> of them in all; when no strength does, <see cref="ThresholdReplay.Chosen"/> is
+    /// <paramref name="minimumAnswered"/> of them in all; when no score does, <see cref="ThresholdReplay.Chosen"/> is
     /// null — the field's keys then should not answer on their own. A document whose keys were never seen before is a lookup without an answer. Repeats of
-    /// the same documents answering each other well do not lower the strength that a weakly backed key needs. The key layer
+    /// the same documents answering each other well do not lower the score that a weakly backed value needs. The key layer
     /// is consulted first, on every lookup, so this is right on its own; <see cref="SelectLayersAsync"/> chooses it the
     /// same way together with the memory threshold.
     /// </summary>
@@ -151,7 +151,7 @@ public static class ThresholdSelection
         ArgumentNullException.ThrowIfNull(documents);
         Check(form, field, targetPrecision, minimumAnswered);
 
-        var matches = new List<(double Strength, bool Correct)>();
+        var matches = new List<(double Score, bool Correct)>();
         var lookups = 0;
         var ordered = documents
             .OrderBy(d => d.SettledAt)
@@ -168,7 +168,7 @@ public static class ThresholdSelection
                 lookups++;
                 if (memory.First(form, field, document.Values, settled) is { } first)
                 {
-                    matches.Add((first.Strength, first.Matches));
+                    matches.Add((first.Score, first.Matches));
                 }
             }
 
@@ -179,7 +179,7 @@ public static class ThresholdSelection
     }
 
     /// <summary>One document of a replay: what the field memory and the document memory held before it said about it.</summary>
-    private readonly record struct Step(bool KeyLooked, (double Strength, bool Matches)? Key, bool Looked, (double Similarity, bool Correct)? Match);
+    private readonly record struct Step(bool KeyLooked, (double Score, bool Matches)? Key, bool Looked, (double Similarity, bool Correct)? Match);
 
     /// <summary>
     /// Replays the documents in the order they were settled, asking each memory about each document before putting it in

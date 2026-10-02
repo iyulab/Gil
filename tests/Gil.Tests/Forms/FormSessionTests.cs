@@ -48,7 +48,7 @@ public sealed class FormSessionTests
         afterComponent.Select(s => s.Field).Should().Equal("severity", "team");
         var severity = afterComponent[0];
         (severity.Source, severity.Policy, severity.Confidence, severity.Energy).Should().Be((FieldSource.SettledFieldMemory, FieldPolicy.Suggest, (double?)null, 0.0));
-        severity.Candidates[0].Should().Be(new FieldCandidate("low", 1.0, FieldSource.SettledFieldMemory, "component: printer"));
+        severity.Candidates[0].Should().Be(new FieldCandidate("low", (1 + 0.95) / (1 + 0.95 + 1), FieldSource.SettledFieldMemory, "component: printer"));
         (await session.SuggestAsync(Ct)).Select(s => s.Field).Should().Equal("severity", "team");
     }
 
@@ -85,7 +85,7 @@ public sealed class FormSessionTests
 
         memory.Count("ticket").Should().Be(1);
         memory.Rank(Ticket, "severity", new Dictionary<string, string> { ["component"] = "vpn" }, 3)
-            .Select(c => (c.Value, c.Score)).Should().Equal(("high", 1.0));
+            .Select(c => (c.Value, c.Score)).Should().Equal(("high", 0.5));
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public sealed class FormSessionTests
 
         // Once a key strong enough matches, its values lead.
         var keyed = await session.ObserveAsync("component", "vpn", Ct);
-        keyed.Single(s => s.Field == "team").Candidates[0].Should().Be(new FieldCandidate("network", 1.0, FieldSource.SettledFieldMemory, "component: vpn"));
+        keyed.Single(s => s.Field == "team").Candidates[0].Should().Be(new FieldCandidate("network", 0.5, FieldSource.SettledFieldMemory, "component: vpn"));
 
         // Every suggestion is traced under form/field with the evidence lines; the reporter is never among them.
         var trace = sink.Traces[team.TraceId];
