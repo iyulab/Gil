@@ -86,7 +86,8 @@ public sealed class FieldMemory
     /// evidence), then, in the places left, the field's most frequently settled values by their share (without evidence).
     /// Ties go to the value settled most recently, then to the ordinally smaller value, in both parts, so the order
     /// documents arrived in never matters. The keyed values are trusted when the first one's score reaches the field's
-    /// <see cref="FieldDefinition.KeyThreshold"/>; the most frequent values never are. Empty when nothing was settled.
+    /// <see cref="FieldDefinition.KeyThreshold"/>; the most frequent values never are. Only values in the field's domain
+    /// (<see cref="FieldDefinition.Candidates"/>) are ranked. Empty when nothing was settled.
     /// </summary>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
@@ -110,7 +111,9 @@ public sealed class FieldMemory
             .Take(count)
             .Select(s => new FieldCandidate(s.Value, s.Score, FieldSource.SettledFieldMemory, $"{s.Key.Field}: {s.Key.Value}", trusted));
         var overall = index.Values.TryGetValue(new Slot(field, null), out var totals)
-            ? totals.Shares(excluding).Select(s => new FieldCandidate(s.Value, s.Share, FieldSource.SettledFieldMemory, null, Trusted: false))
+            ? totals.Shares(excluding)
+                .Where(s => definition.Admits(s.Value))
+                .Select(s => new FieldCandidate(s.Value, s.Share, FieldSource.SettledFieldMemory, null, Trusted: false))
             : [];
         return [.. keyed.Concat(overall).DistinctBy(c => c.Value, StringComparer.Ordinal).Take(count)];
     }
@@ -132,7 +135,9 @@ public sealed class FieldMemory
 
     /// <summary>
     /// The values settled under the known keys, best first: by their score — the sum of their strengths under each key —
-    /// then the latest settlement, then ordinally. Each carries the key it is strongest under.
+    /// then the latest settlement, then ordinally. Each carries the key it is strongest under. Values outside the field's
+    /// domain are left out, so the best value in it is the one a threshold is compared with; they still count towards
+    /// their keys' totals, which they were settled under.
     /// </summary>
     private List<(string Value, double Score, Key Key)> Keyed(
         FormIndex index, FormDefinition form, FieldDefinition field, IReadOnlyDictionary<string, string> known, string? excluding)
@@ -145,7 +150,7 @@ public sealed class FieldMemory
                 continue;
             }
 
-            foreach (var (value, _, strength, latest) in counts.Shares(excluding))
+            foreach (var (value, _, strength, latest) in counts.Shares(excluding).Where(s => field.Admits(s.Value)))
             {
                 var (score, strongest, backing, last) = scores.GetValueOrDefault(value, (0, 0, default, DateTimeOffset.MinValue));
                 (backing, strongest) = strength > strongest ? (key, strength) : (backing, strongest);

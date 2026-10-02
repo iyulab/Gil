@@ -16,6 +16,17 @@ with what to do.
 
 ### Changed
 
+- **A field's `Candidates` bound every layer, not only the model.** A judged field with a closed list could still be
+  suggested a value outside it — by the key layer, by a similar document or as a guess — whenever such a value had been
+  settled, for instance one since dropped from the list; it could even come first and be trusted. Now no layer offers a
+  value outside the list. The key layer ranks only the values in it, so a threshold is compared with the best of those;
+  the similar-document layer offers nothing when the most similar document's value is outside it (rather than a less
+  similar document's), and `SimilarDocuments` leaves such documents out; a model's values outside it are dropped.
+  Threshold replays (`SelectKeyThreshold`, `SelectAsync`, `SelectLayersAsync`) apply the same rule, so what they promise
+  matches what is suggested. Such settlements are still remembered, and are suggested again if the list takes the value
+  back. `FieldDefinition.Admits` tells whether a value lies in the list. What to do: nothing for a field without
+  `Candidates`, or one whose settled values all lie in its list — suggestions and chosen thresholds are unchanged. If
+  settled values fall outside a field's list, choose its thresholds again.
 - **A `FieldMemory` lookup costs as much as a key has values, however long its history.** Every settlement used to send
   its key's weights back to be taken afresh, sorting all of that key's settlements on the next lookup, and a suggestion
   for an unsaved document scanned them all to see whether it was among them. A key present on nearly every document

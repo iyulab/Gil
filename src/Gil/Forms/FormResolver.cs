@@ -181,7 +181,7 @@ public sealed class FormResolver
         var frequent = remembered.Where(c => c.Evidence is null).ToList();
         var candidates = keyed.Where(c => c.Trusted)
             .Concat(similar.Where(c => c.Trusted))
-            .Concat(modelled?.Candidates ?? [])
+            .Concat(modelled?.Candidates.Where(c => field.Admits(c.Value)) ?? [])
             .Concat(keyed.Where(c => !c.Trusted))
             .Concat(frequent.Take(1))
             .Concat(similar.Where(c => !c.Trusted))
@@ -215,7 +215,9 @@ public sealed class FormResolver
     /// <summary>
     /// The most similar settled document's value — trusted when similar enough, a guess when the field sets no threshold —
     /// the documents behind it, and what the lookup found. The document itself is never its own evidence: one more is
-    /// asked for, and it is passed over.
+    /// asked for, and it is passed over. When the most similar document's value lies outside the field's domain the layer
+    /// offers nothing, rather than a less similar document's — the one rule a replay reproduces with any memory, since a
+    /// memory need rank only the nearest — and documents outside it are not reported.
     /// </summary>
     private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
         FieldDefinition field, string documentId, string task, string evidence, string traceId, CancellationToken cancellationToken)
@@ -237,9 +239,11 @@ public sealed class FormResolver
             }
 
             var match = others[0];
-            var hit = match.Similarity >= threshold;
+            var admitted = field.Admits(match.Answer);
+            var hit = admitted && match.Similarity >= threshold;
             var recall = new Recall(match.Source, match.Similarity, threshold, hit);
-            return ([new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)], [.. others.Take(SimilarDocumentCount)], recall, energy);
+            var neighbours = others.Where(m => field.Admits(m.Answer)).Take(SimilarDocumentCount).ToList();
+            return (admitted ? [new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)] : [], neighbours, recall, energy);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

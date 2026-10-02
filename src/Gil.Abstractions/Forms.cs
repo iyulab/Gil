@@ -31,8 +31,15 @@ public enum FieldPolicy
 /// <param name="Role">Given, or suggested.</param>
 public sealed record FieldDefinition(string Name, FieldRole Role)
 {
-    /// <summary>A closed list of values; when present, a model chooses only among them. Null means the value is open.</summary>
+    /// <summary>
+    /// A closed list of values — the field's domain. When present, no suggestion offers a value outside it: a model chooses
+    /// only among them, and a value settled outside it, such as one since dropped from the list, is still remembered but
+    /// never suggested. Null means the value is open.
+    /// </summary>
     public IReadOnlyList<string>? Candidates { get; init; }
+
+    /// <summary>Whether <paramref name="value"/> lies in the field's domain: always when it is open, else when <see cref="Candidates"/> lists it (ordinally).</summary>
+    public bool Admits(string value) => Candidates is null || Candidates.Contains(value, StringComparer.Ordinal);
 
     public FieldPolicy Policy { get; init; } = FieldPolicy.Suggest;
 

@@ -195,6 +195,7 @@ public static class ThresholdSelection
         CancellationToken cancellationToken)
     {
         var task = FormResolver.TaskName(form, field);
+        var definition = form.Field(field);
         var traceId = Guid.NewGuid().ToString("N"); // the replay's cost is its own
         var steps = new List<Step>();
         var remembered = 0;
@@ -226,7 +227,8 @@ public static class ThresholdSelection
             if (remembered > 0)
             {
                 var (found, _) = await memory.LookupAsync(task, evidence, traceId, cancellationToken).ConfigureAwait(false);
-                match = found is null ? null : (found.Similarity, found.Answer == settled);
+                // As a suggestion does, a nearest document whose value lies outside the field's domain offers nothing.
+                match = found is null || !definition.Admits(found.Answer) ? null : (found.Similarity, found.Answer == settled);
             }
 
             steps.Add(new Step(keyLooked, first, remembered > 0, match));
