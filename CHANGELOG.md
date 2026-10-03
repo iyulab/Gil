@@ -19,6 +19,12 @@ with what to do.
   order people fill in; then choose thresholds again. A form whose judged fields depend only on observed fields replays
   as before, unless an observed value changed after a field was settled. Code that constructs `SettledDocument` by position compiles unchanged; recompile against this version.
 
+### Changed
+
+- **README: a chosen threshold holds only for the Gil version that chose it.** A release may change how a layer scores
+  or what the replay asks, as 0.9.0, 0.10.0 and this release did. Store the Gil version with a threshold and choose
+  again when it changes.
+
 ## 0.10.0
 
 ### Breaking

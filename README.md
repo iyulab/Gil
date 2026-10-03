@@ -381,6 +381,16 @@ var layers = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new L
 var team = form.Field("team") with { KeyThreshold = layers.Key.Chosen?.Threshold, MemoryThreshold = layers.Memory.Chosen?.Threshold };
 ```
 
+A chosen threshold also holds only for the version of Gil that chose it. A threshold rests on how a layer scores its
+candidates and on what the replay asks, and a release may change either: 0.9.0 changed the key layer's scale, 0.10.0
+and 0.11.0 what the replay asks. When you store a threshold, store the Gil version with it and choose again when that
+version changes:
+
+```csharp
+var gilVersion = typeof(FormResolver).Assembly
+    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+```
+
 The replay looks each field up with the values that had arrived before it was settled — what its last suggestion was
 made from. `Snapshot()` records that order in `SettledDocument.Arrival`; save it with the document. Without it, observed
 values count as there from the start and judged fields as settled in the form's order. Even so, the precision a replay
