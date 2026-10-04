@@ -59,6 +59,19 @@ public sealed class SetValuedFieldTests
     }
 
     [Fact]
+    public async Task A_set_takes_no_memory_threshold_and_has_no_similarity_threshold_to_choose()
+    {
+        var act = () => new FormDefinition(
+            "paper",
+            [new FieldDefinition("tags", FieldRole.Judged) { Multiple = true, MemoryThreshold = 0.5 }],
+            PromptLanguage.English);
+        act.Should().Throw<ArgumentException>().WithMessage("*no memory threshold*");
+
+        var select = () => ThresholdSelection.SelectAsync(new Gil.Memory.LexicalMemory(), Paper, "topics", [], 0.9, 5, TestContext.Current.CancellationToken);
+        await select.Should().ThrowAsync<ArgumentException>().WithMessage("*SelectKeyThreshold*");
+    }
+
+    [Fact]
     public void A_field_is_settled_where_its_kind_belongs()
     {
         var memory = new FieldMemory();

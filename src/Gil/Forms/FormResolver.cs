@@ -248,7 +248,8 @@ public sealed class FormResolver
             sink.CloseTrace(traceId, new TraceOutcome
             {
                 Mode = answered ? Mode(source) : "abstain",
-                Output = answered ? candidates[0].Value : null,
+                // A set's answer is every value trusted on its own score, one per line, best first.
+                Output = !answered ? null : field.Multiple ? string.Join("\n", candidates.Where(c => c.Trusted).Select(c => c.Value)) : candidates[0].Value,
                 Confidence = confidence,
                 Energy = energy,
                 Recall = recall,
@@ -271,9 +272,9 @@ public sealed class FormResolver
     private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
         FieldDefinition field, string documentId, string task, string evidence, string traceId, CancellationToken cancellationToken)
     {
-        if (DocumentMemory is not IMemory memory || evidence.Length == 0)
+        if (DocumentMemory is not IMemory memory || evidence.Length == 0 || field.Multiple)
         {
-            return ([], [], null, 0);
+            return ([], [], null, 0); // a document memory holds one value per document: it has nothing for a set
         }
 
         var threshold = field.MemoryThreshold;

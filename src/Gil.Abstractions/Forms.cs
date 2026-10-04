@@ -89,7 +89,9 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     /// Values of the field already chosen are evidence for the rest, whatever <see cref="DependsOn"/> and
     /// <see cref="UseAsEvidence"/> say, which govern evidence between fields; as evidence for another field, each value is a
     /// key of its own. <see cref="Candidates"/> lists the values each element may take. A value that has a main one among
-    /// several is better a second, single-valued field.
+    /// several is better a second, single-valued field. The settled field memory and a model suggest such a field; the
+    /// similar document layer does not — a document memory holds one value per document — so it takes no
+    /// <see cref="MemoryThreshold"/>.
     /// </summary>
     public bool Multiple { get; init; }
 }
@@ -101,7 +103,8 @@ public sealed record FormDefinition
     /// <param name="fields">At least one judged field; names unique.</param>
     /// <param name="language">The wording model calls for this form are made in.</param>
     /// <exception cref="ArgumentException">
-    /// A duplicate field name, no judged field, an observed field marked <see cref="FieldDefinition.Multiple"/>, or a
+    /// A duplicate field name, no judged field, an observed field marked <see cref="FieldDefinition.Multiple"/> or such a
+    /// field with a <see cref="FieldDefinition.MemoryThreshold"/>, or a
     /// <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the field itself, or a field that is not evidence.
     /// </exception>
     public FormDefinition(string name, IReadOnlyList<FieldDefinition> fields, PromptLanguage language)
@@ -129,6 +132,11 @@ public sealed record FormDefinition
         if (fields.FirstOrDefault(f => f.Multiple && f.Role != FieldRole.Judged) is { } observedSet)
         {
             throw new ArgumentException($"Field '{observedSet.Name}' is observed; only a judged field can take several values.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.Multiple && f.MemoryThreshold is not null) is { } rememberedSet)
+        {
+            throw new ArgumentException($"Field '{rememberedSet.Name}' takes several values; the similar document layer does not suggest it, so it takes no memory threshold.", nameof(fields));
         }
 
         foreach (var field in fields)

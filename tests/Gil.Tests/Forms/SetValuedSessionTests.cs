@@ -1,6 +1,7 @@
 using System.Globalization;
 using AwesomeAssertions;
 using Gil.Forms;
+using Gil.Memory;
 
 namespace Gil.Tests.Forms;
 
@@ -143,5 +144,37 @@ public sealed class SetValuedSessionTests
 
         model.Asked[^1].Should().Equal(KeyValuePair.Create("topics", "nlp"), KeyValuePair.Create("topics", "vision"));
         topics.Candidates.Select(c => c.Value).Should().Equal("robotics");
+    }
+
+    private sealed class ThrowingMemory : IMemory
+    {
+        public Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("looked up");
+
+        public Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(0.0);
+
+        public void Forget(string task, string key)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_set_is_not_looked_up_in_the_document_memory_and_its_trace_records_every_trusted_value()
+    {
+        var sink = new ListSink();
+        var resolver = new FormResolver(new FieldMemory(recencyDecay: 1), documentMemory: new ThrowingMemory(), sink: sink);
+        await resolver.RebuildAsync(Paper, History, Ct);
+        var session = resolver.Open(Paper, "d4");
+
+        var first = await session.ObserveAsync("area", "ai", Ct);
+        var topics = first.Single(s => s.Field == "topics");
+        var lead = first.Single(s => s.Field == "lead");
+        sink.Traces[topics.TraceId].Outcome!.Recall.Should().BeNull(); // no lookup was made for the set
+        sink.Traces[lead.TraceId].Outcome!.Recall!.Hit.Should().BeFalse(); // the single-valued field was looked up (and failed)
+        sink.Traces[topics.TraceId].Outcome!.Output.Should().Be("nlp");
+
+        var after = (await session.SettleAsync("topics", Settlement.Set(["nlp"]), Ct)).Single(s => s.Field == "topics");
+        sink.Traces[after.TraceId].Outcome!.Output.Should().Be("vision\ngenomics");
     }
 }

@@ -88,6 +88,7 @@ public static class ThresholdSelection
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(documents);
         Check(form, field, targetPrecision, minimumAnswered);
+        NotASet(form, field);
 
         var steps = await ReplayAsync(null, memory, form, field, documents, cancellationToken).ConfigureAwait(false);
         return Similarity(steps.Where(s => s.Looked), targetPrecision, minimumAnswered);
@@ -128,6 +129,7 @@ public static class ThresholdSelection
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(documents);
         Check(form, field, targetPrecision, minimumAnswered);
+        NotASet(form, field);
 
         var steps = await ReplayAsync(fieldMemory, memory, form, field, documents, cancellationToken).ConfigureAwait(false);
         var keyed = steps.Where(s => s.KeyLooked).ToList();
@@ -468,6 +470,15 @@ public static class ThresholdSelection
     {
         var steps = looked.ToList();
         return Fit([.. steps.Where(s => s.Match is not null).Select(s => s.Match!.Value)], steps.Count, targetPrecision, minimumAnswered);
+    }
+
+    /// <summary>The similar document layer does not suggest a field that takes several values, so it has no threshold to choose.</summary>
+    private static void NotASet(FormDefinition form, string field)
+    {
+        if (form.Field(field).Multiple)
+        {
+            throw new ArgumentException($"'{field}' takes several values; the similar document layer does not suggest it — choose its key threshold with SelectKeyThreshold.", nameof(field));
+        }
     }
 
     private static void Check(FormDefinition form, string field, double targetPrecision, int minimumAnswered)
