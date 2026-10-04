@@ -28,6 +28,11 @@ with what to do.
   already could). Where judged fields are evidence for each other, each field still reads a different text; those texts
   are now embedded in batches too.
 
+### Dependencies
+
+- `IronHive.Providers.OpenAI.Compatible` 0.45.1 → 0.50.0 (`Gil.IronHive`). Nothing `Gil.IronHive` uses changed shape;
+  its connect timeout and retries stay Gil's own settings.
+
 ## 0.11.0
 
 ### Breaking
