@@ -419,6 +419,33 @@ Thresholds chosen there for a target of 0.8 delivered 0.66 to 0.72 on the docume
 documents come in batches that share their observed values, expect the similar document layer to fall short of a high
 target, and read even `MostPrecise` as optimistic: it is measured on the same documents it was chosen on.
 
+Which fields a judged field rests on matters most when the field has many values. A field that rarely decides it still
+adds to the score of the values settled alongside its own: a value drawn from many, each seen only a few times — a
+model number, say — lends a few wrong values most of their strength and pushes them above the right one. Name the
+fields that decide the field in `DependsOn`. To find them in the saved documents, replay the key layer with
+`ThresholdSelection.SelectDependsOn`. It tries each evidence field alone, adds them in order of how often their key
+layer answers at the target precision while each addition answers more often, and names a set only if it answers more
+often than every field together; otherwise `DependsOn` comes back null. Then choose the thresholds again with the fields
+it named, since a narrower set changes the scores:
+
+```csharp
+var narrowed = ThresholdSelection.SelectDependsOn(() => new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+var resting = form.Field("team") with { DependsOn = narrowed.DependsOn };
+```
+
+Replaying a public stream of maintenance reports, it chose two of thirteen observed fields for a fault code with several
+hundred values: the key layer answered 1.9 times as often as with every field, at a precision of 0.94 against 0.90.
+These were the two fields a learned weighting of the fields ranked highest, and resting on them answered 2.2 times as
+often on the documents that followed, at 0.95 against 0.89. It costs one replay per evidence field and one per addition.
+
+When a person starts typing into a judged field, filter the candidates by what has been typed rather than dropping
+them. Ask for more candidates than you show — create the resolver with a larger `candidateCount` — so that the list
+reaches past the first few into the field's other settled values, and keep those that begin with the typed text
+(ignoring case). Replaying a public stream of settled documents with twenty candidates, filtering by the typed text
+saved about half of the keystrokes a person would type into the judged fields, against about a third when the list was
+shown once and not filtered. One typed letter put the settled value first about half the time, against three times in
+eight before typing.
+
 ## Build and test
 
 Requires the .NET 10 SDK.

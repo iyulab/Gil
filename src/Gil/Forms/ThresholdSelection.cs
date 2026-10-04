@@ -23,6 +23,24 @@ public sealed record ThresholdChoice(double Threshold, double Precision, double 
 /// <param name="Candidates">How many of them found a candidate at any score.</param>
 public sealed record ThresholdReplay(ThresholdChoice? Chosen, ThresholdChoice? MostPrecise, int Lookups, int Candidates);
 
+/// <summary>One set of fields tried for a judged field's <see cref="FieldDefinition.DependsOn"/>, and how its key layer replayed.</summary>
+/// <param name="DependsOn">The fields the judged field rested on in this replay.</param>
+/// <param name="Replay">The key layer's replay with them, as <see cref="ThresholdSelection.SelectKeyThreshold"/> makes it.</param>
+public sealed record DependsOnTrial(IReadOnlyList<string> DependsOn, ThresholdReplay Replay);
+
+/// <summary>
+/// The fields a judged field's suggestions should rest on (<see cref="FieldDefinition.DependsOn"/>), chosen by replaying
+/// its key layer, and the replays the choice was made from.
+/// </summary>
+/// <param name="DependsOn">
+/// The fields to name, in the order they were added; null when no narrower set answered more often than every evidence
+/// field together — leave <see cref="FieldDefinition.DependsOn"/> unset.
+/// </param>
+/// <param name="Chosen">The key layer's replay with the choice — with every evidence field when <paramref name="DependsOn"/> is null.</param>
+/// <param name="AllFields">The key layer's replay with every evidence field, as the field stands without <see cref="FieldDefinition.DependsOn"/>.</param>
+/// <param name="Trials">Every set tried: each evidence field alone, in the form's order, then each set the greedy additions tried.</param>
+public sealed record DependsOnChoice(IReadOnlyList<string>? DependsOn, ThresholdReplay Chosen, ThresholdReplay AllFields, IReadOnlyList<DependsOnTrial> Trials);
+
 /// <summary>The replays of a field's two memory layers, in the order the form resolver consults them.</summary>
 /// <param name="Key">For <see cref="FieldDefinition.KeyThreshold"/>, replayed on every lookup.</param>
 /// <param name="Memory">For <see cref="FieldDefinition.MemoryThreshold"/>, replayed on the lookups the chosen key threshold would not have answered.</param>
@@ -180,6 +198,85 @@ public static class ThresholdSelection
 
         return Fit(matches, lookups, targetPrecision, minimumAnswered);
     }
+
+    /// <summary>
+    /// Chooses the fields a judged field should rest on (<see cref="FieldDefinition.DependsOn"/>) by how often its key
+    /// layer then answers at <paramref name="targetPrecision"/>. A key that rarely decides the field still adds to every
+    /// value's score, so where a few fields decide a field with many values and the rest only blur it, resting on those few
+    /// answers more often at the same precision. Replays the key layer as <see cref="SelectKeyThreshold"/> does with each
+    /// evidence field alone, ranks them by the answers their chosen threshold gives, then adds them in that order while
+    /// each addition answers more often. The result names that set only if it answers more often than every evidence field
+    /// together; otherwise <see cref="DependsOnChoice.DependsOn"/> is null. It costs one replay per evidence field and one
+    /// per addition tried. Choose the field's thresholds again with the fields chosen: a narrower set changes the scores.
+    /// </summary>
+    /// <param name="createMemory">Makes an empty field memory configured as the one in use, one per replay. Never the one serving suggestions.</param>
+    /// <param name="form">The form.</param>
+    /// <param name="field">A judged field of the form; its own <see cref="FieldDefinition.DependsOn"/> is ignored.</param>
+    /// <param name="documents">Settled documents, in any order, as for <see cref="SelectKeyThreshold"/>.</param>
+    /// <param name="targetPrecision">The share of answers that must match, in (0, 1].</param>
+    /// <param name="minimumAnswered">The fewest answers a precision may rest on; the application's call, as for similarity.</param>
+    public static DependsOnChoice SelectDependsOn(
+        Func<FieldMemory> createMemory,
+        FormDefinition form,
+        string field,
+        IEnumerable<SettledDocument> documents,
+        double targetPrecision,
+        int minimumAnswered)
+    {
+        ArgumentNullException.ThrowIfNull(createMemory);
+        ArgumentNullException.ThrowIfNull(form);
+        ArgumentNullException.ThrowIfNull(documents);
+        Check(form, field, targetPrecision, minimumAnswered);
+
+        var saved = documents.ToList();
+        var trials = new List<DependsOnTrial>();
+        ThresholdReplay Replay(IReadOnlyList<string>? dependsOn) =>
+            SelectKeyThreshold(createMemory(), RestingOn(form, field, dependsOn), field, saved, targetPrecision, minimumAnswered);
+        DependsOnTrial Try(IReadOnlyList<string> dependsOn)
+        {
+            var trial = new DependsOnTrial(dependsOn, Replay(dependsOn));
+            trials.Add(trial);
+            return trial;
+        }
+
+        static int Answers(ThresholdReplay replay) => replay.Chosen?.Answered ?? 0;
+
+        var all = Replay(null);
+        var evidence = form.Fields.Where(f => f.Name != field && f.UseAsEvidence).Select(f => f.Name).ToList();
+        var ranked = evidence
+            .Select(name => Try([name]))
+            .OrderByDescending(t => Answers(t.Replay)) // stable: on a tie, the form's order
+            .ToList();
+        var best = ranked.FirstOrDefault();
+        if (best is null || Answers(best.Replay) == 0)
+        {
+            return new DependsOnChoice(null, all, all, trials);
+        }
+
+        foreach (var next in ranked.Skip(1))
+        {
+            if (best.DependsOn.Count + 1 == evidence.Count)
+            {
+                break; // every evidence field: the replay without DependsOn
+            }
+
+            var trial = Try([.. best.DependsOn, next.DependsOn[0]]);
+            if (Answers(trial.Replay) <= Answers(best.Replay))
+            {
+                break;
+            }
+
+            best = trial;
+        }
+
+        return Answers(best.Replay) > Answers(all)
+            ? new DependsOnChoice(best.DependsOn, best.Replay, all, trials)
+            : new DependsOnChoice(null, all, all, trials);
+    }
+
+    /// <summary>The form with <paramref name="field"/> resting on <paramref name="dependsOn"/> (every evidence field when null).</summary>
+    private static FormDefinition RestingOn(FormDefinition form, string field, IReadOnlyList<string>? dependsOn) =>
+        new(form.Name, [.. form.Fields.Select(f => f.Name == field ? f with { DependsOn = dependsOn } : f)], form.Language);
 
     /// <summary>One document of a replay: what the field memory and the document memory held before it said about it.</summary>
     private readonly record struct Step(bool KeyLooked, (double Score, bool Matches)? Key, bool Looked, (double Similarity, bool Correct)? Match);

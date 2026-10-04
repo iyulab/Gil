@@ -5,8 +5,20 @@ with what to do.
 
 ## Unreleased
 
+### Added
+
+- **`ThresholdSelection.SelectDependsOn` chooses the fields a judged field should rest on.** It replays the field's key
+  layer with each evidence field alone, adds them in order of how often they answer at the target precision while each
+  addition answers more often, and returns that set (`DependsOnChoice.DependsOn`) only if it answers more often than
+  every evidence field together, with every replay it tried. Where a few fields decide a field with many values and
+  the rest only blur it, resting on those few answers more often at the same precision.
+
 ### Changed
 
+- **README: `DependsOn` for fields with many values, and filtering candidates by typed text.** Two measured
+  recommendations: name the fields that decide a field with many values in `DependsOn` (chosen with
+  `SelectDependsOn`), and, while a person types into a judged field, filter a longer candidate list by the typed text
+  instead of dropping it.
 - **A form's judged fields no longer embed the same evidence text once each.** `EmbeddingMemory` keeps the vectors of
   the texts it embedded recently, so the judged fields of one document — remembered or suggested by the same evidence,
   one task each — cost one embedding call instead of one per field. `FormResolver.RebuildAsync` has the document memory

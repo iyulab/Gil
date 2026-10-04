@@ -124,5 +124,8 @@ internal static class ReadmeExample
 
         var gilVersion = typeof(FormResolver).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+        var narrowed = ThresholdSelection.SelectDependsOn(() => new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
+        var resting = form.Field("team") with { DependsOn = narrowed.DependsOn };
     }
 }
