@@ -161,15 +161,32 @@ public sealed class FieldMemory
     /// The score of the best-ranked value settled under the known keys and whether it is <paramref name="value"/> — what
     /// <see cref="FieldDefinition.KeyThreshold"/> is compared with; null when no known key was seen.
     /// </summary>
-    internal (double Score, bool Matches)? First(FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string value)
+    internal (double Score, bool Matches)? First(
+        FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string value, IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null)
     {
         if (!_forms.TryGetValue(form.Name, out var index))
         {
             return null;
         }
 
-        var ranked = Keyed(index, form, form.Field(field), known, NoSets, excluding: null);
+        var ranked = Keyed(index, form, form.Field(field), known, knownSets ?? NoSets, excluding: null);
         return ranked.Count > 0 ? (ranked[0].Score, ranked[0].Value == value) : null;
+    }
+
+    /// <summary>
+    /// Every value of a field that takes several settled under the known keys, with the score each is compared with
+    /// <see cref="FieldDefinition.KeyThreshold"/> on — the chosen values left out, as <see cref="Rank"/> leaves them out.
+    /// </summary>
+    internal List<(string Value, double Score)> Scored(
+        FormDefinition form, string field, IReadOnlyDictionary<string, string> known, IReadOnlyDictionary<string, IReadOnlyList<string>> knownSets)
+    {
+        if (!_forms.TryGetValue(form.Name, out var index))
+        {
+            return [];
+        }
+
+        var chosen = new HashSet<string>(Elements(knownSets, field), StringComparer.Ordinal);
+        return [.. Keyed(index, form, form.Field(field), known, knownSets, excluding: null).Where(s => !chosen.Contains(s.Value)).Select(s => (s.Value, s.Score))];
     }
 
     /// <summary>
