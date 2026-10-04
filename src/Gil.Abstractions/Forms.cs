@@ -105,6 +105,27 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     public double? KeyThreshold { get; init; }
 
     /// <summary>
+    /// Thresholds for the key layer while a person types into the field, by how many characters are typed: the first
+    /// entry applies once one character is typed, the second at two, and so on. Typed text narrows the candidates to the
+    /// values that begin with it (ignoring case); a value under the keys is then trusted when its score reaches the entry
+    /// for that length. Past the list, or where an entry is null, the narrowed values are offered as guesses only. A
+    /// person types into a field only when the suggestion before did not do, so each entry is chosen on the documents
+    /// typed that far: choose them with <c>ThresholdSelection.SelectTypedKeyThresholds</c>, after
+    /// <see cref="KeyThreshold"/>, which they follow. Not for a field that takes several values.
+    /// </summary>
+    public IReadOnlyList<double?>? TypedKeyThresholds { get; init; }
+
+    /// <summary>
+    /// The key threshold a suggestion is held to with <paramref name="typed"/> characters typed into the field:
+    /// <see cref="KeyThreshold"/> with none, else the entry of <see cref="TypedKeyThresholds"/> for that many, if any.
+    /// </summary>
+    public double? KeyThresholdFor(int typed)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(typed);
+        return typed == 0 ? KeyThreshold : TypedKeyThresholds is { } thresholds && typed <= thresholds.Count ? thresholds[typed - 1] : null;
+    }
+
+    /// <summary>
     /// The fields whose values this field's suggestions may rest on. A hint that removes noisy evidence; null means every
     /// other field that is evidence (see <see cref="UseAsEvidence"/>). Which fields actually matter is learned from settled
     /// documents either way.
@@ -142,7 +163,7 @@ public sealed record FormDefinition
     /// <param name="language">The wording model calls for this form are made in.</param>
     /// <exception cref="ArgumentException">
     /// A duplicate field name, no judged field, an observed field marked <see cref="FieldDefinition.Multiple"/> or such a
-    /// field with a <see cref="FieldDefinition.MemoryThreshold"/>, or a
+    /// field with a <see cref="FieldDefinition.MemoryThreshold"/> or <see cref="FieldDefinition.TypedKeyThresholds"/>, or a
     /// <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the field itself, or a field that is not evidence,
     /// or a <see cref="FieldDefinition.CandidatesFrom"/> that names an unknown field or the field itself.
     /// </exception>
@@ -176,6 +197,11 @@ public sealed record FormDefinition
         if (fields.FirstOrDefault(f => f.Multiple && f.MemoryThreshold is not null) is { } rememberedSet)
         {
             throw new ArgumentException($"Field '{rememberedSet.Name}' takes several values; the similar document layer does not suggest it, so it takes no memory threshold.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.Multiple && f.TypedKeyThresholds is not null) is { } typedSet)
+        {
+            throw new ArgumentException($"Field '{typedSet.Name}' takes several values; typed text narrows its candidates but takes no typed key thresholds.", nameof(fields));
         }
 
         foreach (var field in fields)

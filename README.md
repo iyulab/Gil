@@ -438,13 +438,25 @@ hundred values: the key layer answered 1.9 times as often as with every field, a
 These were the two fields a learned weighting of the fields ranked highest, and resting on them answered 2.2 times as
 often on the documents that followed, at 0.95 against 0.89. It costs one replay per evidence field and one per addition.
 
-When a person starts typing into a judged field, filter the candidates by what has been typed rather than dropping
-them. Ask for more candidates than you show — create the resolver with a larger `candidateCount` — so that the list
-reaches past the first few into the field's other settled values, and keep those that begin with the typed text
-(ignoring case). Replaying a public stream of settled documents with twenty candidates, filtering by the typed text
-saved about half of the keystrokes a person would type into the judged fields, against about a third when the list was
-shown once and not filtered. One typed letter put the settled value first about half the time, against three times in
-eight before typing.
+When a person starts typing into a judged field, ask again with what has been typed rather than dropping the
+suggestion. `SuggestAsync` takes, for each field being typed into, the text typed so far; the field stays open, and its
+suggestion offers only values that begin with the text (ignoring case). Only the key layer answers then, held to a
+threshold for that many characters typed, `TypedKeyThresholds`. A person types only where the suggestion before did not
+do, and the documents left are the harder ones, so a threshold chosen on every document promises more than it keeps
+there: choose them with `SelectTypedKeyThresholds`, after `KeyThreshold`, which replays each document as typed from its
+start and chooses each length's threshold on the documents typed that far:
+
+```csharp
+var typedTeam = form.Field("team") with { TypedKeyThresholds = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30).Thresholds };
+var whileTyping = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen, new Dictionary<string, IReadOnlyList<string>>(), new Dictionary<string, string> { ["team"] = "ne" });
+```
+
+Replaying a public stream of settled documents with thresholds chosen this way on its first half, one typed character
+was where nearly all of the gain lay: the judged fields of the second half were answered rightly about ten times as
+often as before typing, at a precision of 0.87 against a target of 0.8, and a person was spared 7% of the characters
+of the settled values, against 1% before. A screen that shows a list rather than one value can instead keep the candidates that begin with the typed
+text: with twenty candidates, filtering by the typed text saved about half of the keystrokes, against about a third
+when the list was shown once and not filtered.
 
 A judged field can take several values — tags, the topics a document covers, the answers to a multiple-choice
 question. Mark it `Multiple`; its values are settled as a set, in `SettledDocument.Sets` rather than `Values`, and

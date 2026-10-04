@@ -41,6 +41,17 @@ public sealed record DependsOnTrial(IReadOnlyList<string> DependsOn, ThresholdRe
 /// <param name="Trials">Every set tried: each evidence field alone, in the form's order, then each set the greedy additions tried.</param>
 public sealed record DependsOnChoice(IReadOnlyList<string>? DependsOn, ThresholdReplay Chosen, ThresholdReplay AllFields, IReadOnlyList<DependsOnTrial> Trials);
 
+/// <summary>The key thresholds chosen for typing into a field (<see cref="FieldDefinition.TypedKeyThresholds"/>).</summary>
+/// <param name="ByLength">
+/// The key layer's replay with one character typed, then two, and so on — each over the documents a person types that far,
+/// those the thresholds before did not answer rightly.
+/// </param>
+public sealed record TypedKeyThresholds(IReadOnlyList<ThresholdReplay> ByLength)
+{
+    /// <summary>The thresholds to set as <see cref="FieldDefinition.TypedKeyThresholds"/>: each replay's chosen one, null where none was.</summary>
+    public IReadOnlyList<double?> Thresholds => [.. ByLength.Select(r => r.Chosen?.Threshold)];
+}
+
 /// <summary>The replays of a field's two memory layers, in the order the form resolver consults them.</summary>
 /// <param name="Key">For <see cref="FieldDefinition.KeyThreshold"/>, replayed on every lookup.</param>
 /// <param name="Memory">For <see cref="FieldDefinition.MemoryThreshold"/>, replayed on the lookups the chosen key threshold would not have answered.</param>
@@ -225,6 +236,93 @@ public static class ThresholdSelection
         }
 
         return Fit(matches, lookups, targetPrecision, minimumAnswered);
+    }
+
+    /// <summary>
+    /// Chooses the key thresholds that hold while a person types into the field
+    /// (<see cref="FieldDefinition.TypedKeyThresholds"/>). Typed text narrows the field to the values that begin with it, so
+    /// with each character typed the key layer is a different question, with a threshold of its own. A person types only
+    /// where the suggestion before did not do — the threshold for one character is worth only what it does on the
+    /// documents its <see cref="FieldDefinition.KeyThreshold"/> did not answer rightly, and so on — and a threshold chosen
+    /// on every document promises more than it keeps there, as the documents left are the harder ones. So the replay
+    /// supposes a person who types the settled value from its start: each document is asked about with none of it typed,
+    /// against the field's <see cref="FieldDefinition.KeyThreshold"/> as it stands, then with one character, two, up to
+    /// <paramref name="longest"/>, and the threshold for each length is chosen as <see cref="SelectKeyThreshold"/> chooses,
+    /// on the documents not yet answered rightly and long enough to type that far. Set
+    /// <see cref="FieldDefinition.KeyThreshold"/> first: these thresholds follow it, and must be chosen again when it changes.
+    /// </summary>
+    /// <param name="memory">An empty field memory configured as the one in use; the replay fills it. Never the one serving suggestions.</param>
+    /// <param name="form">The form.</param>
+    /// <param name="field">A judged field of the form that takes one value.</param>
+    /// <param name="documents">Settled documents, in any order, as for <see cref="SelectKeyThreshold"/>.</param>
+    /// <param name="targetPrecision">The share of answers that must match, in (0, 1].</param>
+    /// <param name="minimumAnswered">The fewest answers a precision may rest on, for each length.</param>
+    /// <param name="longest">The most characters typed a threshold is chosen for.</param>
+    /// <exception cref="ArgumentException">The field takes several values.</exception>
+    public static TypedKeyThresholds SelectTypedKeyThresholds(
+        FieldMemory memory,
+        FormDefinition form,
+        string field,
+        IEnumerable<SettledDocument> documents,
+        double targetPrecision,
+        int minimumAnswered,
+        int longest = 3)
+    {
+        ArgumentNullException.ThrowIfNull(memory);
+        ArgumentNullException.ThrowIfNull(form);
+        ArgumentNullException.ThrowIfNull(documents);
+        Check(form, field, targetPrecision, minimumAnswered);
+        ArgumentOutOfRangeException.ThrowIfLessThan(longest, 1);
+        var definition = form.Field(field);
+        if (definition.Multiple)
+        {
+            throw new ArgumentException($"Field '{field}' takes several values; typed key thresholds are for a field that takes one.", nameof(field));
+        }
+
+        // Every document asked about: whether the field's key threshold answered it rightly, and what the key layer said
+        // with each length of the settled value typed.
+        var asked = new List<(bool Answered, string Settled, (double Score, bool Matches)?[] Typed)>();
+        var ordered = documents
+            .OrderBy(d => d.SettledAt)
+            .ThenBy(d => d.DocumentId, StringComparer.Ordinal); // the order the field memory weighs settlements in
+        foreach (var document in ordered)
+        {
+            if (!document.Values.TryGetValue(field, out var settled))
+            {
+                continue;
+            }
+
+            memory.Remove(form.Name, document.DocumentId); // a document settled again is not its own evidence
+            if (memory.Count(form.Name) > 0)
+            {
+                var (before, beforeSets) = (Before(form, document, field), BeforeSets(form, document, field));
+                var first = memory.First(form, field, before, settled, beforeSets);
+                var answered = first is { Matches: true } && first.Value.Score >= definition.KeyThreshold;
+                var typed = new (double, bool)?[Math.Min(longest, settled.Length)];
+                for (var length = 1; length <= typed.Length; length++)
+                {
+                    typed[length - 1] = memory.FirstTyped(form, field, before, settled, length, beforeSets);
+                }
+
+                asked.Add((answered, settled, typed));
+            }
+
+            memory.Put(form, document);
+        }
+
+        var byLength = new List<ThresholdReplay>();
+        var reaching = asked.Where(a => !a.Answered).ToList();
+        for (var length = 1; length <= longest; length++)
+        {
+            reaching = [.. reaching.Where(a => a.Typed.Length >= length)];
+            var matches = reaching.Select(a => a.Typed[length - 1]).OfType<(double Score, bool Matches)>().Select(m => (m.Score, m.Matches)).ToList();
+            var replay = Fit(matches, reaching.Count, targetPrecision, minimumAnswered);
+            byLength.Add(replay);
+            var threshold = replay.Chosen?.Threshold;
+            reaching = [.. reaching.Where(a => !(a.Typed[length - 1] is { Matches: true } m && m.Score >= threshold))];
+        }
+
+        return new TypedKeyThresholds(byLength);
     }
 
     /// <summary>

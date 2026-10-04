@@ -24,6 +24,15 @@ with what to do.
   replay leaves values outside it out, as they do for `Candidates`, which still applies; a value settled outside it is
   still remembered. `FieldDefinition.Admits` has an overload that takes the document's values.
 
+- **Suggestions while a person types into a judged field.** `FormResolver.SuggestAsync` and `FormSession.SuggestAsync`
+  take, for each field being typed into, the text typed so far: the field stays open and its suggestion offers only
+  values that begin with the text (ignoring case). Only the key layer answers then, held to
+  `FieldDefinition.TypedKeyThresholds` for that many characters (`KeyThresholdFor`); a similar document's value that
+  fits is a guess, and no model is asked. `ThresholdSelection.SelectTypedKeyThresholds` chooses them after
+  `KeyThreshold`, each length on the documents a person types that far — those the thresholds before did not answer
+  rightly. `FieldMemory.Rank` takes the typed text too. Not for a field that takes several values, which typed text
+  only narrows.
+
 ### Changed
 
 - **Threshold replays ask with the sets that had arrived before the field.** A single-valued field whose evidence

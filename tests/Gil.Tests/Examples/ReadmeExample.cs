@@ -128,6 +128,9 @@ internal static class ReadmeExample
         var narrowed = ThresholdSelection.SelectDependsOn(() => new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
         var resting = form.Field("team") with { DependsOn = narrowed.DependsOn };
 
+        var typedTeam = form.Field("team") with { TypedKeyThresholds = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30).Thresholds };
+        var whileTyping = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen, new Dictionary<string, IReadOnlyList<string>>(), new Dictionary<string, string> { ["team"] = "ne" });
+
         await SetValuedFieldAsync(forms);
     }
 

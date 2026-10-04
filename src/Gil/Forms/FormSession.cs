@@ -112,6 +112,26 @@ public sealed class FormSession
     }
 
     /// <summary>
+    /// Suggestions for every open judged field while a person types into some: <paramref name="typed"/> holds, for each such
+    /// field, the text typed so far — it stays open, as typing is not settling — and its suggestion offers only values that
+    /// begin with it (ignoring case), the key layer held to <see cref="FieldDefinition.KeyThresholdFor"/> that many
+    /// characters, as <see cref="FormResolver.SuggestAsync(FormDefinition, string, IReadOnlyDictionary{string, string}, IReadOnlyDictionary{string, IReadOnlyList{string}}, IReadOnlyDictionary{string, string}, CancellationToken)"/> describes.
+    /// </summary>
+    /// <exception cref="ArgumentException">Text is typed into a field that is not judged or already has a value.</exception>
+    public async Task<IReadOnlyList<FieldSuggestion>> SuggestAsync(IReadOnlyDictionary<string, string> typed, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(typed);
+        FormResolver.Typed(Form, typed, f => !Form.Field(f).Multiple && _values.ContainsKey(f));
+        var suggestions = new List<FieldSuggestion>();
+        foreach (var field in Form.Fields.Where(IsOpen))
+        {
+            suggestions.Add(await _resolver.SuggestFieldAsync(Form, DocumentId, _values, field, cancellationToken, _arrival, _sets, typed.GetValueOrDefault(field.Name)).ConfigureAwait(false));
+        }
+
+        return suggestions;
+    }
+
+    /// <summary>
     /// The document's values as they stand — observed and settled — which is what the application saves, with the time a
     /// field was last accepted or corrected (or the time the document was opened with, if none was since), and the order
     /// the values arrived in, by which choosing thresholds replays the document.

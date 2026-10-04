@@ -123,13 +123,18 @@ public sealed class FieldMemory
     /// itself, its chosen values are evidence for the rest and are not offered again, and each value it is offered is
     /// trusted on its own score — several may be.
     /// </param>
+    /// <param name="typed">
+    /// The text a person has typed into the field so far, if any: only values that begin with it (ignoring case) are
+    /// ranked, and the keyed values are held to <see cref="FieldDefinition.KeyThresholdFor"/> that many characters.
+    /// </param>
     public IReadOnlyList<FieldCandidate> Rank(
         FormDefinition form,
         string field,
         IReadOnlyDictionary<string, string> known,
         int count,
         string? excluding = null,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null)
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null,
+        string? typed = null)
     {
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(known);
@@ -142,8 +147,9 @@ public sealed class FieldMemory
 
         var sets = knownSets ?? NoSets;
         var chosen = definition.Multiple ? new HashSet<string>(Elements(sets, field), StringComparer.Ordinal) : [];
-        var ranked = Keyed(index, form, definition, known, sets, excluding).Where(s => !chosen.Contains(s.Value)).ToList();
-        var threshold = definition.KeyThreshold;
+        typed = string.IsNullOrEmpty(typed) ? null : typed;
+        var ranked = Keyed(index, form, definition, known, sets, excluding, typed).Where(s => !chosen.Contains(s.Value)).ToList();
+        var threshold = definition.KeyThresholdFor(typed?.Length ?? 0);
         var layerTrusted = ranked.Count > 0 && ranked[0].Score >= threshold;
         var keyed = ranked
             .Take(count)
@@ -152,7 +158,7 @@ public sealed class FieldMemory
                 definition.Multiple ? s.Score >= threshold : layerTrusted));
         var overall = index.Values.TryGetValue(new Slot(field, null), out var totals)
             ? totals.Shares(excluding)
-                .Where(s => definition.Admits(s.Value, known, sets) && !chosen.Contains(s.Value))
+                .Where(s => definition.Admits(s.Value, known, sets) && Begins(s.Value, typed) && !chosen.Contains(s.Value))
                 .Select(s => new FieldCandidate(s.Value, s.Share, FieldSource.SettledFieldMemory, null, Trusted: false))
             : [];
         return [.. keyed.Concat(overall).DistinctBy(c => c.Value, StringComparer.Ordinal).Take(count)];
@@ -175,6 +181,27 @@ public sealed class FieldMemory
     }
 
     /// <summary>
+    /// As <see cref="First"/>, with the first <paramref name="typed"/> characters of <paramref name="value"/> typed into
+    /// the field: the best-ranked value that begins with them — what <see cref="FieldDefinition.KeyThresholdFor"/> that
+    /// many characters is compared with; null when no value under the known keys does.
+    /// </summary>
+    internal (double Score, bool Matches)? FirstTyped(
+        FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string value, int typed, IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null)
+    {
+        if (!_forms.TryGetValue(form.Name, out var index))
+        {
+            return null;
+        }
+
+        var ranked = Keyed(index, form, form.Field(field), known, knownSets ?? NoSets, excluding: null, value[..typed]);
+        return ranked.Count > 0 ? (ranked[0].Score, ranked[0].Value == value) : null;
+    }
+
+    /// <summary>Whether <paramref name="value"/> begins with the text typed so far (ignoring case); always when none is.</summary>
+    internal static bool Begins(string value, string? typed) =>
+        typed is null || value.StartsWith(typed, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Every value of a field that takes several settled under the known keys, with the score each is compared with
     /// <see cref="FieldDefinition.KeyThreshold"/> on — the chosen values left out, as <see cref="Rank"/> leaves them out.
     /// </summary>
@@ -193,8 +220,8 @@ public sealed class FieldMemory
     /// <summary>
     /// The values settled under the known keys, best first: by their score — the sum of their strengths under each key —
     /// then the latest settlement, then ordinally. Each carries the key it is strongest under. Values outside the field's
-    /// domain are left out, so the best value in it is the one a threshold is compared with; they still count towards
-    /// their keys' totals, which they were settled under.
+    /// domain — or not beginning with the text typed so far — are left out, so the best value in it is the one a threshold
+    /// is compared with; they still count towards their keys' totals, which they were settled under.
     /// </summary>
     private List<(string Value, double Score, Key Key)> Keyed(
         FormIndex index,
@@ -202,7 +229,8 @@ public sealed class FieldMemory
         FieldDefinition field,
         IReadOnlyDictionary<string, string> known,
         IReadOnlyDictionary<string, IReadOnlyList<string>> knownSets,
-        string? excluding)
+        string? excluding,
+        string? typed = null)
     {
         var scores = new Dictionary<string, (double Score, double Strongest, Key Key, DateTimeOffset Latest)>(StringComparer.Ordinal);
         var keys = Keys(form, field, known, knownSets);
@@ -218,7 +246,7 @@ public sealed class FieldMemory
                 continue;
             }
 
-            foreach (var (value, _, strength, latest) in counts.Shares(excluding).Where(s => field.Admits(s.Value, known, knownSets)))
+            foreach (var (value, _, strength, latest) in counts.Shares(excluding).Where(s => field.Admits(s.Value, known, knownSets) && Begins(s.Value, typed)))
             {
                 var (score, strongest, backing, last) = scores.GetValueOrDefault(value, (0, 0, default, DateTimeOffset.MinValue));
                 (backing, strongest) = strength > strongest ? (key, strength) : (backing, strongest);

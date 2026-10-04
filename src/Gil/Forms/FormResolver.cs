@@ -181,6 +181,59 @@ public sealed class FormResolver
         return suggestions;
     }
 
+    /// <summary>
+    /// As <see cref="SuggestAsync(FormDefinition, string, IReadOnlyDictionary{string, string}, IReadOnlyDictionary{string, IReadOnlyList{string}}, CancellationToken)"/>,
+    /// while a person types into judged fields: <paramref name="typed"/> holds, for each such field, the text typed so far.
+    /// Such a field is open — it has no value yet — and its suggestion offers only values that begin with the typed text
+    /// (ignoring case). Only the key layer answers then, held to <see cref="FieldDefinition.KeyThresholdFor"/> that many
+    /// characters; a similar document's value that fits is offered as a guess, and no model is asked — a person who is
+    /// typing asks again with every pause.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// A field is given where its kind does not belong, or text is typed into a field that is not judged or already has a value.
+    /// </exception>
+    public async Task<IReadOnlyList<FieldSuggestion>> SuggestAsync(
+        FormDefinition form,
+        string documentId,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> sets,
+        IReadOnlyDictionary<string, string> typed,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(form);
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(sets);
+        ArgumentNullException.ThrowIfNull(typed);
+        new SettledDocument(documentId, values, default) { Sets = sets }.Validate(form);
+        Typed(form, typed, values.ContainsKey);
+        var suggestions = new List<FieldSuggestion>();
+        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged && f.Policy != FieldPolicy.Off && (f.Multiple || !values.ContainsKey(f.Name))))
+        {
+            suggestions.Add(await SuggestFieldAsync(form, documentId, values, field, cancellationToken, sets: sets, typed: typed.GetValueOrDefault(field.Name)).ConfigureAwait(false));
+        }
+
+        return suggestions;
+    }
+
+    /// <summary>Checks that text is typed only into judged fields without a value.</summary>
+    internal static void Typed(FormDefinition form, IReadOnlyDictionary<string, string> typed, Func<string, bool> hasValue)
+    {
+        foreach (var (name, text) in typed)
+        {
+            ArgumentNullException.ThrowIfNull(text, nameof(typed));
+            if (form.Field(name).Role != FieldRole.Judged)
+            {
+                throw new ArgumentException($"Text is typed into '{name}', which is not a judged field.", nameof(typed));
+            }
+
+            if (hasValue(name))
+            {
+                throw new ArgumentException($"Text is typed into '{name}', which already has a value.", nameof(typed));
+            }
+        }
+    }
+
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> NoSets =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
@@ -200,9 +253,11 @@ public sealed class FormResolver
         FieldDefinition field,
         CancellationToken cancellationToken,
         IReadOnlyList<string>? arrival = null,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? sets = null)
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? sets = null,
+        string? typed = null)
     {
         var started = Stopwatch.GetTimestamp();
+        typed = string.IsNullOrEmpty(typed) ? null : typed;
         var traceId = Guid.NewGuid().ToString("N");
         var task = TaskName(form, field.Name);
         sets ??= NoSets;
@@ -211,14 +266,14 @@ public sealed class FormResolver
         Sink?.OpenTrace(traceId, task, lines); // opened first: a model resolving under the same id closes it
 
         var chosen = field.Multiple && sets.TryGetValue(field.Name, out var picked) ? new HashSet<string>(picked, StringComparer.Ordinal) : [];
-        var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId, knownSets: sets);
+        var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId, knownSets: sets, typed: typed);
         var keyed = remembered.Where(c => c.Evidence is not null).ToList();
-        var (similar, neighbours, recall, energy) = await SimilarAsync(field, documentId, task, lines, values, sets, traceId, cancellationToken).ConfigureAwait(false);
+        var (similar, neighbours, recall, energy) = await SimilarAsync(field, documentId, task, lines, values, sets, typed, traceId, cancellationToken).ConfigureAwait(false);
 
         // A model only where neither memory had evidence: a value backed by what the document says — even by a key too
-        // weak to answer — beats a model's guess.
+        // weak to answer — beats a model's guess. Not while a person is typing: they ask again with every pause.
         FieldModelResult? modelled = null;
-        if (Model is IFieldModel model && keyed.Count == 0 && !similar.Any(c => c.Trusted))
+        if (Model is IFieldModel model && typed is null && keyed.Count == 0 && !similar.Any(c => c.Trusted))
         {
             var ordered = arrival is null ? evidence : InArrivalOrder(evidence, arrival);
             modelled = await model.SuggestAsync(form, field.Name, ordered, traceId, cancellationToken).ConfigureAwait(false);
@@ -277,6 +332,7 @@ public sealed class FormResolver
         string evidence,
         IReadOnlyDictionary<string, string> values,
         IReadOnlyDictionary<string, IReadOnlyList<string>> sets,
+        string? typed,
         string traceId,
         CancellationToken cancellationToken)
     {
@@ -297,10 +353,10 @@ public sealed class FormResolver
             }
 
             var match = others[0];
-            var admitted = field.Admits(match.Answer, values, sets);
-            var hit = admitted && match.Similarity >= threshold;
+            var admitted = field.Admits(match.Answer, values, sets) && FieldMemory.Begins(match.Answer, typed);
+            var hit = admitted && typed is null && match.Similarity >= threshold; // typed text: only the key layer answers
             var recall = new Recall(match.Source, match.Similarity, threshold, hit);
-            var neighbours = others.Where(m => field.Admits(m.Answer, values, sets)).Take(SimilarDocumentCount).ToList();
+            var neighbours = others.Where(m => field.Admits(m.Answer, values, sets) && FieldMemory.Begins(m.Answer, typed)).Take(SimilarDocumentCount).ToList();
             return (admitted ? [new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)] : [], neighbours, recall, energy);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
