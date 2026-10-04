@@ -349,17 +349,33 @@ public enum SettlementKind
     /// acceptance or correction; the value itself is a settled value like any other.
     /// </summary>
     Restore,
+
+    /// <summary>
+    /// The values of a field that takes several (<see cref="FieldDefinition.Multiple"/>) were settled — whichever of them
+    /// were suggested and whichever a person added. Settling the field again replaces them.
+    /// </summary>
+    Set,
 }
 
-/// <summary>A settlement of one judged field. Accepting is not the same as being right: settling the field again later corrects it.</summary>
+/// <summary>
+/// A settlement of one judged field. Accepting is not the same as being right: settling the field again later corrects it.
+/// A field that takes several values (<see cref="FieldDefinition.Multiple"/>) is settled with <see cref="Set"/>, restored
+/// with <see cref="Restore(IEnumerable{string})"/>, and rejected or reverted as any other.
+/// </summary>
 public sealed record Settlement
 {
-    private Settlement(SettlementKind kind, string? value) => (Kind, Value) = (kind, value);
+    private Settlement(SettlementKind kind, string? value, IReadOnlyList<string>? values = null) => (Kind, Value, Values) = (kind, value, values);
 
     public SettlementKind Kind { get; }
 
-    /// <summary>The settled value; null for <see cref="SettlementKind.Reject"/> and <see cref="SettlementKind.Revert"/>.</summary>
+    /// <summary>The settled value of a single-valued field; null for <see cref="SettlementKind.Reject"/>, <see cref="SettlementKind.Revert"/> and settlements of a set.</summary>
     public string? Value { get; }
+
+    /// <summary>The settled values of a field that takes several, once each and ordinally; null for a single-valued field's settlement, <see cref="SettlementKind.Reject"/> and <see cref="SettlementKind.Revert"/>.</summary>
+    public IReadOnlyList<string>? Values { get; }
+
+    /// <summary>Whether this settles a field that takes several values.</summary>
+    public bool IsSet => Values is not null;
 
     public static Settlement Accept(string value) => new(SettlementKind.Accept, Required(value));
 
@@ -370,6 +386,18 @@ public sealed record Settlement
     public static Settlement Revert() => new(SettlementKind.Revert, null);
 
     public static Settlement Restore(string value) => new(SettlementKind.Restore, Required(value));
+
+    /// <summary>Settles a field that takes several values with these — none at all clears it. Order and repeats carry no meaning.</summary>
+    public static Settlement Set(IEnumerable<string> values) => new(SettlementKind.Set, null, Elements(values));
+
+    /// <summary>Puts back the saved values of a field that takes several, as <see cref="Restore(string)"/> does for one.</summary>
+    public static Settlement Restore(IEnumerable<string> values) => new(SettlementKind.Restore, null, Elements(values));
+
+    private static string[] Elements(IEnumerable<string> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return [.. values.Select(Required).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+    }
 
     private static string Required(string value)
     {
