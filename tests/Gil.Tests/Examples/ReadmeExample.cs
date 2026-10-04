@@ -127,5 +127,22 @@ internal static class ReadmeExample
 
         var narrowed = ThresholdSelection.SelectDependsOn(() => new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
         var resting = form.Field("team") with { DependsOn = narrowed.DependsOn };
+
+        await SetValuedFieldAsync(forms);
+    }
+
+    // The README's set-valued field reuses the names of the walkthrough above, so it runs in a scope of its own.
+    private static async Task SetValuedFieldAsync(FormResolver forms)
+    {
+        var paper = new FormDefinition("paper",
+        [
+            new FieldDefinition("venue", FieldRole.Observed),
+            new FieldDefinition("topics", FieldRole.Judged) { Multiple = true, KeyThreshold = 0.8 },
+        ], PromptLanguage.English);
+
+        var session = forms.Open(paper, "papers/0107");
+        await session.ObserveAsync("venue", "ACL");
+        var rest = await session.SettleAsync("topics", Settlement.Set(["parsing"]));   // suggests the other topics
+        var saved = session.Snapshot();                                                 // saved.Sets["topics"]
     }
 }
