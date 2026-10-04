@@ -44,25 +44,48 @@ public sealed class FieldMemory
     /// <summary>How many documents with at least one settled judged field the form's memory holds.</summary>
     public int Count(string form) => _forms.TryGetValue(form, out var index) ? index.Documents : 0;
 
-    /// <summary>Replaces what the document contributed with what its current values imply. Values of fields the form does not have are ignored.</summary>
+    /// <summary>
+    /// Replaces what the document contributed with what its current values imply. Values of fields the form does not have
+    /// are ignored. A field that takes several values settles each of them: under the document's keys, and under each of
+    /// its other values — the values of one document weigh alike, as one settlement, whatever order they are listed in.
+    /// </summary>
+    /// <exception cref="ArgumentException">A field of the form is kept where its kind does not belong (<see cref="SettledDocument.Validate"/>).</exception>
     public void Put(FormDefinition form, SettledDocument document)
     {
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(document);
+        document.Validate(form);
         var index = Index(form.Name);
         index.Remove(document.DocumentId);
 
         var tallies = new List<Tally>();
-        foreach (var field in form.Fields)
+        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged))
         {
-            if (field.Role != FieldRole.Judged || !document.Values.TryGetValue(field.Name, out var value))
+            if (field.Multiple)
+            {
+                var elements = Elements(document.Sets, field.Name);
+                var keys = Keys(form, field, document.Values, document.Sets).ToList();
+                foreach (var element in elements)
+                {
+                    var settlement = new Settled(element, document.SettledAt, document.DocumentId);
+                    tallies.Add(new Tally(field.Name, null, settlement));
+                    tallies.AddRange(keys
+                        .Concat(OwnKeys(field, elements.Where(e => e != element)))
+                        .Distinct()
+                        .Select(key => new Tally(field.Name, key, settlement)));
+                }
+
+                continue;
+            }
+
+            if (!document.Values.TryGetValue(field.Name, out var value))
             {
                 continue;
             }
 
-            var settlement = new Settled(value, document.SettledAt, document.DocumentId);
-            tallies.Add(new Tally(field.Name, null, settlement));
-            tallies.AddRange(Keys(form, field, document.Values).Select(key => new Tally(field.Name, key, settlement)));
+            var single = new Settled(value, document.SettledAt, document.DocumentId);
+            tallies.Add(new Tally(field.Name, null, single));
+            tallies.AddRange(Keys(form, field, document.Values, document.Sets).Select(key => new Tally(field.Name, key, single)));
         }
 
         if (tallies.Count > 0)
@@ -94,7 +117,18 @@ public sealed class FieldMemory
     /// <param name="known">The document's values so far; the field's own value, if present, is not evidence for itself.</param>
     /// <param name="count">At most this many.</param>
     /// <param name="excluding">A document whose settlements are left out, so that a saved document is not evidence for itself.</param>
-    public IReadOnlyList<FieldCandidate> Rank(FormDefinition form, string field, IReadOnlyDictionary<string, string> known, int count, string? excluding = null)
+    /// <param name="knownSets">
+    /// The values chosen so far of fields that take several (<see cref="FieldDefinition.Multiple"/>). For such a field
+    /// itself, its chosen values are evidence for the rest and are not offered again, and each value it is offered is
+    /// trusted on its own score — several may be.
+    /// </param>
+    public IReadOnlyList<FieldCandidate> Rank(
+        FormDefinition form,
+        string field,
+        IReadOnlyDictionary<string, string> known,
+        int count,
+        string? excluding = null,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null)
     {
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(known);
@@ -105,14 +139,19 @@ public sealed class FieldMemory
             return [];
         }
 
-        var ranked = Keyed(index, form, definition, known, excluding);
-        var trusted = ranked.Count > 0 && definition.KeyThreshold is double threshold && ranked[0].Score >= threshold;
+        var sets = knownSets ?? NoSets;
+        var chosen = definition.Multiple ? new HashSet<string>(Elements(sets, field), StringComparer.Ordinal) : [];
+        var ranked = Keyed(index, form, definition, known, sets, excluding).Where(s => !chosen.Contains(s.Value)).ToList();
+        var threshold = definition.KeyThreshold;
+        var layerTrusted = ranked.Count > 0 && ranked[0].Score >= threshold;
         var keyed = ranked
             .Take(count)
-            .Select(s => new FieldCandidate(s.Value, s.Score, FieldSource.SettledFieldMemory, $"{s.Key.Field}: {s.Key.Value}", trusted));
+            .Select(s => new FieldCandidate(
+                s.Value, s.Score, FieldSource.SettledFieldMemory, $"{s.Key.Field}: {s.Key.Value}",
+                definition.Multiple ? s.Score >= threshold : layerTrusted));
         var overall = index.Values.TryGetValue(new Slot(field, null), out var totals)
             ? totals.Shares(excluding)
-                .Where(s => definition.Admits(s.Value))
+                .Where(s => definition.Admits(s.Value) && !chosen.Contains(s.Value))
                 .Select(s => new FieldCandidate(s.Value, s.Share, FieldSource.SettledFieldMemory, null, Trusted: false))
             : [];
         return [.. keyed.Concat(overall).DistinctBy(c => c.Value, StringComparer.Ordinal).Take(count)];
@@ -129,7 +168,7 @@ public sealed class FieldMemory
             return null;
         }
 
-        var ranked = Keyed(index, form, form.Field(field), known, excluding: null);
+        var ranked = Keyed(index, form, form.Field(field), known, NoSets, excluding: null);
         return ranked.Count > 0 ? (ranked[0].Score, ranked[0].Value == value) : null;
     }
 
@@ -140,10 +179,21 @@ public sealed class FieldMemory
     /// their keys' totals, which they were settled under.
     /// </summary>
     private List<(string Value, double Score, Key Key)> Keyed(
-        FormIndex index, FormDefinition form, FieldDefinition field, IReadOnlyDictionary<string, string> known, string? excluding)
+        FormIndex index,
+        FormDefinition form,
+        FieldDefinition field,
+        IReadOnlyDictionary<string, string> known,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> knownSets,
+        string? excluding)
     {
         var scores = new Dictionary<string, (double Score, double Strongest, Key Key, DateTimeOffset Latest)>(StringComparer.Ordinal);
-        foreach (var key in Keys(form, field, known))
+        var keys = Keys(form, field, known, knownSets);
+        if (field.Multiple)
+        {
+            keys = keys.Concat(OwnKeys(field, Elements(knownSets, field.Name))).Distinct();
+        }
+
+        foreach (var key in keys)
         {
             if (!index.Values.TryGetValue(new Slot(field.Name, key), out var counts))
             {
@@ -165,23 +215,45 @@ public sealed class FieldMemory
             .Select(s => (s.Key, s.Value.Score, s.Value.Key))];
     }
 
-    /// <summary>The keys the document's values give <paramref name="field"/>: every other field that supports it, with a short enough value.</summary>
-    private IEnumerable<Key> Keys(FormDefinition form, FieldDefinition field, IReadOnlyDictionary<string, string> values)
+    /// <summary>
+    /// The keys the document's values give <paramref name="field"/>: every other field that supports it, with a short enough
+    /// value — each value of a field that takes several being a key of its own.
+    /// </summary>
+    private IEnumerable<Key> Keys(
+        FormDefinition form, FieldDefinition field, IReadOnlyDictionary<string, string> values, IReadOnlyDictionary<string, IReadOnlyList<string>> sets)
     {
-        foreach (var evidence in form.Fields)
+        var keys = new List<Key>();
+        foreach (var evidence in form.Fields.Where(e => form.Supports(e.Name, field.Name)))
         {
-            if (!form.Supports(evidence.Name, field.Name) || !values.TryGetValue(evidence.Name, out var raw))
+            if (evidence.Multiple)
             {
-                continue;
+                keys.AddRange(OwnKeys(evidence, Elements(sets, evidence.Name)));
             }
-
-            var normal = TextNormal.Collapse(raw);
-            if (normal.Length > 0 && normal.Length <= _maxKeyLength)
+            else if (values.TryGetValue(evidence.Name, out var raw) && KeyOf(evidence.Name, raw) is { } key)
             {
-                yield return new Key(evidence.Name, normal);
+                keys.Add(key);
             }
         }
+
+        return keys.Distinct();
     }
+
+    /// <summary>The keys values of <paramref name="field"/> make — the field's own name with each short enough value.</summary>
+    private IEnumerable<Key> OwnKeys(FieldDefinition field, IEnumerable<string> values) =>
+        values.Select(v => KeyOf(field.Name, v)).OfType<Key>().Distinct();
+
+    private Key? KeyOf(string field, string raw)
+    {
+        var normal = TextNormal.Collapse(raw);
+        return normal.Length > 0 && normal.Length <= _maxKeyLength ? new Key(field, normal) : null;
+    }
+
+    /// <summary>A set field's values, once each and ordinally — the order a set is listed in carries no meaning.</summary>
+    private static List<string> Elements(IReadOnlyDictionary<string, IReadOnlyList<string>> sets, string field) =>
+        sets.TryGetValue(field, out var values) ? [.. values.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)] : [];
+
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> NoSets =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
     private FormIndex Index(string form)
     {
@@ -254,12 +326,13 @@ public sealed class FieldMemory
     /// settlement later than every one before it — what a stream of new documents brings — continues the fold, so a
     /// lookup costs as much as the key has values however long its history; one that arrives out of order, or one taken
     /// away, has the fold run again from the earliest. Either way the same settlements reach the same weights to the bit.
-    /// A document settles at most once under a key (<see cref="FieldMemory.Put"/> replaces what it contributed).
+    /// A document settles at most once under a key (<see cref="FieldMemory.Put"/> replaces what it contributed) — with one
+    /// value, or with several of a field that takes several, which weigh alike as one settlement.
     /// </summary>
     private sealed class Counts(double recencyDecay)
     {
         private readonly List<Settled> _settled = [];
-        private readonly HashSet<string> _documents = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _documents = new(StringComparer.Ordinal); // settlements per document
         private Fold _fold = new(recencyDecay);
         private bool _stale;
         private (string Value, double Share, double Strength, DateTimeOffset Latest)[]? _shares;
@@ -269,9 +342,9 @@ public sealed class FieldMemory
         public void Add(Settled settled)
         {
             _settled.Add(settled);
-            _documents.Add(settled.DocumentId);
+            _documents[settled.DocumentId] = _documents.GetValueOrDefault(settled.DocumentId) + 1;
             _shares = null;
-            if (_stale || (_fold.Newest is { } newest && !Later(settled, newest)))
+            if (_stale || (_fold.Newest is { } newest && !Later(settled, newest) && !Together(settled, newest)))
             {
                 _stale = true; // out of order: its weight depends on how many came after it
                 return;
@@ -283,7 +356,11 @@ public sealed class FieldMemory
         public void Subtract(Settled settled)
         {
             _settled.Remove(settled);
-            _documents.Remove(settled.DocumentId);
+            if (--_documents[settled.DocumentId] == 0)
+            {
+                _documents.Remove(settled.DocumentId);
+            }
+
             _shares = null;
             _stale = true;
         }
@@ -295,7 +372,7 @@ public sealed class FieldMemory
         /// </summary>
         public (string Value, double Share, double Strength, DateTimeOffset Latest)[] Shares(string? excluding = null)
         {
-            if (excluding is not null && _documents.Contains(excluding))
+            if (excluding is not null && _documents.ContainsKey(excluding))
             {
                 return Weigh(_settled.Where(s => s.DocumentId != excluding)).Shares();
             }
@@ -313,6 +390,9 @@ public sealed class FieldMemory
         private static bool Later(Settled a, Settled b) =>
             a.At > b.At || (a.At == b.At && string.CompareOrdinal(a.DocumentId, b.DocumentId) > 0);
 
+        /// <summary>Whether two settlements are one document's values settled together — they weigh alike.</summary>
+        internal static bool Together(Settled a, Settled b) => a.At == b.At && a.DocumentId == b.DocumentId;
+
         private Fold Weigh(IEnumerable<Settled> settlements)
         {
             var fold = new Fold(recencyDecay);
@@ -326,25 +406,38 @@ public sealed class FieldMemory
     }
 
     /// <summary>
-    /// The weights of settlements added from the earliest. The latest settlement weighs exactly 1 and is held apart; every
-    /// earlier one is a raw amount times a common scale, so making them all one step lighter is one multiplication of the
-    /// scale. The raw amounts are folded back into the scale before it gets too small to hold.
+    /// The weights of settlements added from the earliest. The latest settlement weighs exactly 1 and is held apart — all of
+    /// it, when a document settled several values together; every earlier one is a raw amount times a common scale, so
+    /// making them all one step lighter is one multiplication of the scale. The raw amounts are folded back into the scale
+    /// before it gets too small to hold.
     /// </summary>
     private sealed class Fold(double recencyDecay)
     {
         private readonly Dictionary<string, (double Raw, DateTimeOffset Latest)> _raw = new(StringComparer.Ordinal);
+        private readonly List<Settled> _newest = []; // the latest settlement: one document's values, settled together
         private double _rawTotal;
         private double _scale = 1;
 
-        public Settled? Newest { get; private set; }
+        public Settled? Newest => _newest.Count > 0 ? _newest[^1] : null;
 
         public void Add(Settled settled)
         {
-            if (Newest is { } previous)
+            if (Newest is { } last && Counts.Together(settled, last))
+            {
+                _newest.Add(settled); // the same settlement: no step lighter between its values
+                return;
+            }
+
+            if (_newest.Count > 0)
             {
                 var amount = 1 / _scale; // the previous latest joins the earlier ones at weight 1, then all grow lighter
-                _raw[previous.Value] = (_raw.GetValueOrDefault(previous.Value).Raw + amount, previous.At);
-                _rawTotal += amount;
+                foreach (var previous in _newest)
+                {
+                    _raw[previous.Value] = (_raw.GetValueOrDefault(previous.Value).Raw + amount, previous.At);
+                    _rawTotal += amount;
+                }
+
+                _newest.Clear();
                 _scale *= recencyDecay;
                 if (_scale < 1e-150)
                 {
@@ -358,20 +451,24 @@ public sealed class FieldMemory
                 }
             }
 
-            Newest = settled;
+            _newest.Add(settled);
         }
 
         public (string Value, double Share, double Strength, DateTimeOffset Latest)[] Shares()
         {
-            if (Newest is not { } newest)
+            if (_newest.Count == 0)
             {
                 return [];
             }
 
             var weights = _raw.ToDictionary(w => w.Key, w => (Weight: w.Value.Raw * _scale, w.Value.Latest), StringComparer.Ordinal);
-            var (own, _) = weights.GetValueOrDefault(newest.Value);
-            weights[newest.Value] = (own + 1, newest.At);
-            var total = (_rawTotal * _scale) + 1;
+            foreach (var newest in _newest)
+            {
+                var (own, _) = weights.GetValueOrDefault(newest.Value);
+                weights[newest.Value] = (own + 1, newest.At);
+            }
+
+            var total = (_rawTotal * _scale) + _newest.Count;
             return [.. weights
                 .Select(w => (Value: w.Key, Share: w.Value.Weight / total, Strength: w.Value.Weight / (total + 1), w.Value.Latest))
                 .OrderByDescending(w => w.Share)

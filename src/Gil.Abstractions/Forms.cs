@@ -80,6 +80,18 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     /// own value is still recorded and settled as usual.
     /// </summary>
     public bool UseAsEvidence { get; init; } = true;
+
+    /// <summary>
+    /// True makes a judged field's value a set: several values, in no order, such as tags, the topics a document covers or
+    /// the answers of a multiple-choice question. Its values are settled in <see cref="SettledDocument.Sets"/>, never in
+    /// <see cref="SettledDocument.Values"/>. Each value is remembered on its own — a document with three values settles
+    /// each of the three under every key — and is suggested on its own, so several candidates may each be trusted.
+    /// Values of the field already chosen are evidence for the rest, whatever <see cref="DependsOn"/> and
+    /// <see cref="UseAsEvidence"/> say, which govern evidence between fields; as evidence for another field, each value is a
+    /// key of its own. <see cref="Candidates"/> lists the values each element may take. A value that has a main one among
+    /// several is better a second, single-valued field.
+    /// </summary>
+    public bool Multiple { get; init; }
 }
 
 /// <summary>A form: the fields a document of it has, and the language a model reads it in.</summary>
@@ -89,8 +101,8 @@ public sealed record FormDefinition
     /// <param name="fields">At least one judged field; names unique.</param>
     /// <param name="language">The wording model calls for this form are made in.</param>
     /// <exception cref="ArgumentException">
-    /// A duplicate field name, no judged field, or a <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the
-    /// field itself, or a field that is not evidence.
+    /// A duplicate field name, no judged field, an observed field marked <see cref="FieldDefinition.Multiple"/>, or a
+    /// <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the field itself, or a field that is not evidence.
     /// </exception>
     public FormDefinition(string name, IReadOnlyList<FieldDefinition> fields, PromptLanguage language)
     {
@@ -112,6 +124,11 @@ public sealed record FormDefinition
         if (!fields.Any(f => f.Role == FieldRole.Judged))
         {
             throw new ArgumentException("A form needs at least one judged field.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.Multiple && f.Role != FieldRole.Judged) is { } observedSet)
+        {
+            throw new ArgumentException($"Field '{observedSet.Name}' is observed; only a judged field can take several values.", nameof(fields));
         }
 
         foreach (var field in fields)
@@ -178,7 +195,38 @@ public sealed record SettledDocument(
     string DocumentId,
     IReadOnlyDictionary<string, string> Values,
     DateTimeOffset SettledAt,
-    IReadOnlyList<string>? Arrival = null);
+    IReadOnlyList<string>? Arrival = null)
+{
+    /// <summary>
+    /// Field name to the values of a field that takes several (<see cref="FieldDefinition.Multiple"/>); such a field is
+    /// never in <see cref="Values"/>. Order and repeats carry no meaning. A field without values is absent, or empty.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Sets { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Checks that the document keeps each field of <paramref name="form"/> where its kind belongs: a field that takes
+    /// several values only in <see cref="Sets"/>, any other field only in <see cref="Values"/>. Names the form does not
+    /// have are left alone, as everywhere.
+    /// </summary>
+    /// <exception cref="ArgumentException">A field of the form is kept where its kind does not belong.</exception>
+    public void Validate(FormDefinition form)
+    {
+        ArgumentNullException.ThrowIfNull(form);
+        foreach (var field in form.Fields)
+        {
+            if (field.Multiple && Values.ContainsKey(field.Name))
+            {
+                throw new ArgumentException($"Field '{field.Name}' takes several values; settle them in Sets, not Values.", nameof(form));
+            }
+
+            if (!field.Multiple && Sets.ContainsKey(field.Name))
+            {
+                throw new ArgumentException($"Field '{field.Name}' takes one value; settle it in Values, not Sets.", nameof(form));
+            }
+        }
+    }
+}
 
 /// <summary>The layer a suggested value came from.</summary>
 public enum FieldSource
