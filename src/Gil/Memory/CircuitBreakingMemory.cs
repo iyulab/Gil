@@ -16,7 +16,7 @@ public sealed class MemoryUnavailableException(string message, Exception inner) 
 /// <param name="inner">The memory to protect.</param>
 /// <param name="cooldown">How long calls are refused after a failure.</param>
 /// <param name="time">The clock; the system clock by default.</param>
-public sealed class CircuitBreakingMemory(IMemory inner, TimeSpan cooldown, TimeProvider? time = null) : IMemory
+public sealed class CircuitBreakingMemory(IMemory inner, TimeSpan cooldown, TimeProvider? time = null) : IMemory, IEmbeddingPrefetch
 {
     private readonly IMemory _inner = inner ?? throw new ArgumentNullException(nameof(inner));
     private readonly TimeSpan _cooldown = cooldown >= TimeSpan.Zero ? cooldown : throw new ArgumentOutOfRangeException(nameof(cooldown), cooldown, "The cooldown cannot be negative.");
@@ -36,6 +36,12 @@ public sealed class CircuitBreakingMemory(IMemory inner, TimeSpan cooldown, Time
 
     /// <summary>Passed through: forgetting a wrong answer is never refused.</summary>
     public void Forget(string task, string key) => _inner.Forget(task, key);
+
+    /// <summary>Through the circuit, when the inner memory embeds ahead; nothing to do otherwise.</summary>
+    Task<double> IEmbeddingPrefetch.PrefetchAsync(IEnumerable<string> states, string traceId, CancellationToken cancellationToken) =>
+        _inner is IEmbeddingPrefetch prefetch
+            ? GuardAsync(() => prefetch.PrefetchAsync(states, traceId, cancellationToken), cancellationToken)
+            : Task.FromResult(0.0);
 
     /// <summary>Calls the inner memory through the circuit: refused while it is open, and a failure opens it.</summary>
     private async Task<T> GuardAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)

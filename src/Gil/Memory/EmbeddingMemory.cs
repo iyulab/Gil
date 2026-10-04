@@ -10,42 +10,51 @@ public sealed record FeedbackEntry(string TraceId, string State, string? Mode, s
 /// request log — only answers confirmed by feedback go in, and a remembered answer that proved wrong is forgotten — so it
 /// can always be rebuilt from the log.
 /// </summary>
-public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit = 10_000) : IMemory
+public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit = 10_000) : IMemory, IEmbeddingPrefetch
 {
+    /// <summary>How many texts one embedding call carries when several are embedded together.</summary>
+    internal const int Batch = 64;
+
+    /// <summary>How many recently embedded texts keep their vectors.</summary>
+    internal const int RecentLimit = 1024;
+
     private readonly Dictionary<string, Index> _indexes = [];
 
     // A lookup's vector is kept until the request's feedback arrives, so remembering it costs no second embedding.
     private readonly Dictionary<string, float[]> _pending = [];
     private readonly Queue<string> _pendingOrder = new();
 
+    // Recently embedded texts and their vectors: several tasks often look up or remember by the same text (a form's
+    // judged fields read the same evidence), and a text embeds to the same vector whichever task asks.
+    private readonly Dictionary<string, float[]> _recent = new(StringComparer.Ordinal);
+    private readonly Queue<string> _recentOrder = new();
+
     public int Count(string task) => _indexes.TryGetValue(task, out var index) ? index.Count : 0;
 
     public async Task<(MemoryMatch? Match, double Energy)> LookupAsync(string task, string state, string traceId, CancellationToken cancellationToken = default)
     {
-        var (vectors, call) = await embedder.EmbedAsync([state], traceId, cancellationToken).ConfigureAwait(false);
-        var query = Unit(vectors[0]);
+        var (query, energy) = await EmbedAsync(state, traceId, cancellationToken).ConfigureAwait(false);
         Keep(traceId, query);
         if (!_indexes.TryGetValue(task, out var index) || index.Count == 0)
         {
-            return (null, call.Energy);
+            return (null, energy);
         }
 
         var (key, similarity, answer) = index.Nearest(query);
-        return (new MemoryMatch(key, similarity, answer), call.Energy);
+        return (new MemoryMatch(key, similarity, answer), energy);
     }
 
     public async Task<(IReadOnlyList<MemoryMatch> Matches, double Energy)> NearestAsync(string task, string state, int count, string traceId, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
-        var (vectors, call) = await embedder.EmbedAsync([state], traceId, cancellationToken).ConfigureAwait(false);
-        var query = Unit(vectors[0]);
+        var (query, energy) = await EmbedAsync(state, traceId, cancellationToken).ConfigureAwait(false);
         Keep(traceId, query);
         if (!_indexes.TryGetValue(task, out var index) || index.Count == 0)
         {
-            return ([], call.Energy);
+            return ([], energy);
         }
 
-        return ([.. index.Top(query, count).Select(m => new MemoryMatch(m.Key, m.Similarity, m.Answer))], call.Energy);
+        return ([.. index.Top(query, count).Select(m => new MemoryMatch(m.Key, m.Similarity, m.Answer))], energy);
     }
 
     public async Task<double> RememberAsync(string task, string key, string state, string answer, string traceId, CancellationToken cancellationToken = default)
@@ -57,9 +66,9 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
             return 0;
         }
 
-        var (vectors, call) = await embedder.EmbedAsync([state], traceId, cancellationToken).ConfigureAwait(false);
-        Put(task, key, Unit(vectors[0]), answer);
-        return call.Energy;
+        var (unit, energy) = await EmbedAsync(state, traceId, cancellationToken).ConfigureAwait(false);
+        Put(task, key, unit, answer);
+        return energy;
     }
 
     public void Forget(string task, string key)
@@ -105,14 +114,94 @@ public sealed class EmbeddingMemory(EmbeddingRecorder embedder, int pendingLimit
 
         foreach (var chunk in replay.Remember.Chunk(batch))
         {
-            var (vectors, _) = await embedder.EmbedAsync([.. chunk.Select(e => e.State)], traceId, cancellationToken).ConfigureAwait(false);
-            for (var i = 0; i < chunk.Length; i++)
+            var (vectors, _) = await EmbedAllAsync(chunk.Select(e => e.State), traceId, batch, cancellationToken).ConfigureAwait(false);
+            foreach (var entry in chunk)
             {
-                Put(task, chunk[i].Key, Unit(vectors[i]), chunk[i].Answer);
+                Put(task, entry.Key, vectors[entry.State], entry.Answer);
             }
         }
 
         return replay.Remember.Count;
+    }
+
+    /// <summary>
+    /// Embeds, in batches, the texts not embedded recently, so the lookups and writes by those texts that follow cost no
+    /// further call: a rebuild embeds each distinct text once, however many tasks remember by it.
+    /// </summary>
+    internal async Task<double> PrefetchAsync(IEnumerable<string> states, string traceId, CancellationToken cancellationToken = default)
+    {
+        var (_, energy) = await EmbedAllAsync(states, traceId, Batch, cancellationToken).ConfigureAwait(false);
+        return energy;
+    }
+
+    Task<double> IEmbeddingPrefetch.PrefetchAsync(IEnumerable<string> states, string traceId, CancellationToken cancellationToken) =>
+        PrefetchAsync(states, traceId, cancellationToken);
+
+    /// <summary>The text's unit vector — embedded unless it was recently — and the energy that cost.</summary>
+    private async Task<(float[] Unit, double Energy)> EmbedAsync(string state, string traceId, CancellationToken cancellationToken)
+    {
+        if (_recent.TryGetValue(state, out var known))
+        {
+            return (known, 0);
+        }
+
+        var (vectors, call) = await embedder.EmbedAsync([state], traceId, cancellationToken).ConfigureAwait(false);
+        var unit = Unit(vectors[0]);
+        Recall(state, unit);
+        return (unit, call.Energy);
+    }
+
+    /// <summary>Unit vectors for the texts: each distinct text not embedded recently is embedded once, in batches.</summary>
+    private async Task<(Dictionary<string, float[]> Vectors, double Energy)> EmbedAllAsync(IEnumerable<string> states, string traceId, int batch, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batch, 1);
+        var vectors = new Dictionary<string, float[]>(StringComparer.Ordinal);
+        var missing = new List<string>();
+        foreach (var state in states)
+        {
+            if (vectors.ContainsKey(state))
+            {
+                continue;
+            }
+
+            if (_recent.TryGetValue(state, out var known))
+            {
+                vectors[state] = known;
+            }
+            else
+            {
+                vectors[state] = [];
+                missing.Add(state);
+            }
+        }
+
+        var energy = 0.0;
+        foreach (var chunk in missing.Chunk(batch))
+        {
+            var (embedded, call) = await embedder.EmbedAsync(chunk, traceId, cancellationToken).ConfigureAwait(false);
+            energy += call.Energy;
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                var unit = Unit(embedded[i]);
+                vectors[chunk[i]] = unit;
+                Recall(chunk[i], unit);
+            }
+        }
+
+        return (vectors, energy);
+    }
+
+    private void Recall(string state, float[] unit)
+    {
+        if (_recent.TryAdd(state, unit))
+        {
+            _recentOrder.Enqueue(state);
+        }
+
+        while (_recentOrder.Count > RecentLimit)
+        {
+            _recent.Remove(_recentOrder.Dequeue());
+        }
     }
 
     private void Keep(string traceId, float[] vector)

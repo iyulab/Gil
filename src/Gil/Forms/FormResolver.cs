@@ -102,13 +102,38 @@ public sealed class FormResolver
         ArgumentNullException.ThrowIfNull(documents);
         var traceId = Guid.NewGuid().ToString("N"); // a trace of its own: the rebuild's cost is not charged to any suggestion
         var energy = 0.0;
-        foreach (var document in documents)
+        var judged = form.Fields.Where(f => f.Role == FieldRole.Judged).ToList();
+        // Documents in groups whose evidence the document memory embeds together first, each distinct text once — the
+        // judged fields of a form often read the same evidence. The writes that follow find the vectors already made.
+        foreach (var group in documents.Chunk(Math.Max(1, PrefetchTexts / judged.Count)))
         {
-            energy += await PutAsync(form, document, traceId, cancellationToken).ConfigureAwait(false);
+            if (DocumentMemory is IEmbeddingPrefetch prefetch)
+            {
+                var texts = group.SelectMany(d => judged.Where(f => d.Values.ContainsKey(f.Name)).Select(f => Evidence(form, f.Name, d.Values)));
+                try
+                {
+                    energy += await prefetch.PrefetchAsync(texts, traceId, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The writes embed one by one instead, and are dropped the same way if the memory is still failing.
+                }
+            }
+
+            foreach (var document in group)
+            {
+                energy += await PutAsync(form, document, traceId, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return energy;
     }
+
+    /// <summary>
+    /// About how many evidence texts a rebuild has the document memory embed ahead at a time — well within what the memory
+    /// keeps (<see cref="EmbeddingMemory.RecentLimit"/>), so none is dropped before its write uses it.
+    /// </summary>
+    internal const int PrefetchTexts = 256;
 
     /// <summary>
     /// Suggests every open judged field — without a value and not <see cref="FieldPolicy.Off"/> — from the values given,

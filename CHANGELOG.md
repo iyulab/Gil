@@ -3,6 +3,19 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Changed
+
+- **A form's judged fields no longer embed the same evidence text once each.** `EmbeddingMemory` keeps the vectors of
+  the texts it embedded recently, so the judged fields of one document — remembered or suggested by the same evidence,
+  one task each — cost one embedding call instead of one per field. `FormResolver.RebuildAsync` has the document memory
+  embed its documents' evidence texts ahead of the writes, in batches of up to 64 distinct texts, instead of one call
+  per field per document. Memory holds the same entries in the same order as before (an embedding model whose vectors
+  vary in the last digits with the batch they are computed in may differ there, as `EmbeddingMemory.RebuildAsync`
+  already could). Where judged fields are evidence for each other, each field still reads a different text; those texts
+  are now embedded in batches too.
+
 ## 0.11.0
 
 ### Breaking
