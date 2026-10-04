@@ -41,6 +41,44 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     /// <summary>Whether <paramref name="value"/> lies in the field's domain: always when it is open, else when <see cref="Candidates"/> lists it (ordinally).</summary>
     public bool Admits(string value) => Candidates is null || Candidates.Contains(value, StringComparer.Ordinal);
 
+    /// <summary>
+    /// Another field of the form whose value in the same document bounds this field's domain — for a field that takes
+    /// several values (<see cref="Multiple"/>), the values chosen in it: the main topic among a document's topics, a
+    /// subcategory within its category. Once that field has a value, no suggestion offers this field a value outside it,
+    /// as with <see cref="Candidates"/>, which still applies as well; while it is empty, the domain is not narrowed. A value
+    /// settled outside it is still remembered, and suggested for documents whose domain admits it.
+    /// </summary>
+    public string? CandidatesFrom { get; init; }
+
+    /// <summary>
+    /// Whether <paramref name="value"/> lies in the field's domain for a document with <paramref name="values"/> and
+    /// <paramref name="sets"/> so far: in <see cref="Candidates"/> when the field has them, and among the values of
+    /// <see cref="CandidatesFrom"/> when that field has any (ordinally).
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="values">The document's single values so far.</param>
+    /// <param name="sets">The values chosen so far of the document's fields that take several.</param>
+    public bool Admits(string value, IReadOnlyDictionary<string, string> values, IReadOnlyDictionary<string, IReadOnlyList<string>>? sets = null)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (!Admits(value))
+        {
+            return false;
+        }
+
+        if (CandidatesFrom is not { } from)
+        {
+            return true;
+        }
+
+        if (sets is not null && sets.TryGetValue(from, out var chosen) && chosen.Count > 0)
+        {
+            return chosen.Contains(value, StringComparer.Ordinal);
+        }
+
+        return !values.TryGetValue(from, out var given) || string.IsNullOrEmpty(given) || string.Equals(given, value, StringComparison.Ordinal);
+    }
+
     public FieldPolicy Policy { get; init; } = FieldPolicy.Suggest;
 
     /// <summary>
@@ -105,7 +143,8 @@ public sealed record FormDefinition
     /// <exception cref="ArgumentException">
     /// A duplicate field name, no judged field, an observed field marked <see cref="FieldDefinition.Multiple"/> or such a
     /// field with a <see cref="FieldDefinition.MemoryThreshold"/>, or a
-    /// <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the field itself, or a field that is not evidence.
+    /// <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the field itself, or a field that is not evidence,
+    /// or a <see cref="FieldDefinition.CandidatesFrom"/> that names an unknown field or the field itself.
     /// </exception>
     public FormDefinition(string name, IReadOnlyList<FieldDefinition> fields, PromptLanguage language)
     {
@@ -152,6 +191,11 @@ public sealed record FormDefinition
                 {
                     throw new ArgumentException($"Field '{field.Name}' depends on '{dependency}', which is not evidence.", nameof(fields));
                 }
+            }
+
+            if (field.CandidatesFrom is { } from && (from == field.Name || !byName.ContainsKey(from)))
+            {
+                throw new ArgumentException($"Field '{field.Name}' takes its candidates from '{from}', which is not another field of the form.", nameof(fields));
             }
         }
 

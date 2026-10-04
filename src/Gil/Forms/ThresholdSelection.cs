@@ -379,7 +379,7 @@ public static class ThresholdSelection
                 var asked = FormResolver.Evidence(form, field, before, beforeSets);
                 var (found, _) = await memory.LookupAsync(task, asked, traceId, cancellationToken).ConfigureAwait(false);
                 // As a suggestion does, a nearest document whose value lies outside the field's domain offers nothing.
-                match = found is null || !definition.Admits(found.Answer) ? null : (found.Similarity, found.Answer == settled);
+                match = found is null || !definition.Admits(found.Answer, before, beforeSets) ? null : (found.Similarity, found.Answer == settled);
             }
 
             steps.Add(new Step(keyLooked, first, remembered > 0, match));

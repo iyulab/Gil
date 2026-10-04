@@ -110,7 +110,8 @@ public sealed class FieldMemory
     /// Ties go to the value settled most recently, then to the ordinally smaller value, in both parts, so the order
     /// documents arrived in never matters. The keyed values are trusted when the first one's score reaches the field's
     /// <see cref="FieldDefinition.KeyThreshold"/>; the most frequent values never are. Only values in the field's domain
-    /// (<see cref="FieldDefinition.Candidates"/>) are ranked. Empty when nothing was settled.
+    /// for this document (<see cref="FieldDefinition.Candidates"/>, narrowed by <see cref="FieldDefinition.CandidatesFrom"/>)
+    /// are ranked. Empty when nothing was settled.
     /// </summary>
     /// <param name="form">The form.</param>
     /// <param name="field">A judged field of the form.</param>
@@ -151,7 +152,7 @@ public sealed class FieldMemory
                 definition.Multiple ? s.Score >= threshold : layerTrusted));
         var overall = index.Values.TryGetValue(new Slot(field, null), out var totals)
             ? totals.Shares(excluding)
-                .Where(s => definition.Admits(s.Value) && !chosen.Contains(s.Value))
+                .Where(s => definition.Admits(s.Value, known, sets) && !chosen.Contains(s.Value))
                 .Select(s => new FieldCandidate(s.Value, s.Share, FieldSource.SettledFieldMemory, null, Trusted: false))
             : [];
         return [.. keyed.Concat(overall).DistinctBy(c => c.Value, StringComparer.Ordinal).Take(count)];
@@ -217,7 +218,7 @@ public sealed class FieldMemory
                 continue;
             }
 
-            foreach (var (value, _, strength, latest) in counts.Shares(excluding).Where(s => field.Admits(s.Value)))
+            foreach (var (value, _, strength, latest) in counts.Shares(excluding).Where(s => field.Admits(s.Value, known, knownSets)))
             {
                 var (score, strongest, backing, last) = scores.GetValueOrDefault(value, (0, 0, default, DateTimeOffset.MinValue));
                 (backing, strongest) = strength > strongest ? (key, strength) : (backing, strongest);

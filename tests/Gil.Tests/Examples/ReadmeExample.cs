@@ -138,6 +138,7 @@ internal static class ReadmeExample
         [
             new FieldDefinition("venue", FieldRole.Observed),
             new FieldDefinition("topics", FieldRole.Judged) { Multiple = true, KeyThreshold = 0.8 },
+            new FieldDefinition("main", FieldRole.Judged) { CandidatesFrom = "topics", KeyThreshold = 0.8 },
         ], PromptLanguage.English);
 
         var session = forms.Open(paper, "papers/0107");

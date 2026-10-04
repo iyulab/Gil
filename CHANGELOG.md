@@ -18,6 +18,12 @@ with what to do.
   document layer does not suggest such a field, so it takes no `MemoryThreshold`. Nothing changes for forms without
   one.
 
+- **A field's domain can come from another field of the same document.** `FieldDefinition.CandidatesFrom` names a
+  field whose value — or, for a field that takes several, whose chosen values — bounds this field's candidates once it
+  has any: the main topic among a document's topics, a subcategory within its category. Every layer and every threshold
+  replay leaves values outside it out, as they do for `Candidates`, which still applies; a value settled outside it is
+  still remembered. `FieldDefinition.Admits` has an overload that takes the document's values.
+
 ### Changed
 
 - **Threshold replays ask with the sets that had arrived before the field.** A single-valued field whose evidence

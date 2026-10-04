@@ -457,6 +457,7 @@ var paper = new FormDefinition("paper",
 [
     new FieldDefinition("venue", FieldRole.Observed),
     new FieldDefinition("topics", FieldRole.Judged) { Multiple = true, KeyThreshold = 0.8 },
+    new FieldDefinition("main", FieldRole.Judged) { CandidatesFrom = "topics", KeyThreshold = 0.8 },
 ], PromptLanguage.English);
 
 var session = forms.Open(paper, "papers/0107");
@@ -466,8 +467,11 @@ var saved = session.Snapshot();                                                 
 ```
 
 Choose its threshold with `SelectKeyThreshold`, which replays each document as values are picked one after another.
-A value that has a main one among several is better a second, single-valued field. The similar document layer does not
-suggest a field with several values, so such a field takes no `MemoryThreshold`. Replaying a public collection of
+A value that has a main one among several is better a second, single-valued field that takes its candidates from the
+set (`CandidatesFrom`): once the document's values are chosen, the main one is offered only among them. The same holds
+for any field whose values depend on another's, such as a subcategory within its category; while the other field is
+empty, nothing is narrowed. The similar document layer does not suggest a field with several values, so such a field
+takes no `MemoryThreshold`. Replaying a public collection of
 patents, each classified into one or more of 37 technology classes, with one class of a document chosen, using the
 chosen class as evidence put a remaining class first slightly more often (0.46 against 0.44) and trusted about one and
 a half times as many of the remaining classes at the same precision (0.79 against a target of 0.8).

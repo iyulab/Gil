@@ -213,7 +213,7 @@ public sealed class FormResolver
         var chosen = field.Multiple && sets.TryGetValue(field.Name, out var picked) ? new HashSet<string>(picked, StringComparer.Ordinal) : [];
         var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId, knownSets: sets);
         var keyed = remembered.Where(c => c.Evidence is not null).ToList();
-        var (similar, neighbours, recall, energy) = await SimilarAsync(field, documentId, task, lines, traceId, cancellationToken).ConfigureAwait(false);
+        var (similar, neighbours, recall, energy) = await SimilarAsync(field, documentId, task, lines, values, sets, traceId, cancellationToken).ConfigureAwait(false);
 
         // A model only where neither memory had evidence: a value backed by what the document says — even by a key too
         // weak to answer — beats a model's guess.
@@ -230,7 +230,7 @@ public sealed class FormResolver
         var frequent = remembered.Where(c => c.Evidence is null).ToList();
         var candidates = keyed.Where(c => c.Trusted)
             .Concat(similar.Where(c => c.Trusted))
-            .Concat(modelled?.Candidates.Where(c => field.Admits(c.Value) && !chosen.Contains(c.Value)) ?? [])
+            .Concat(modelled?.Candidates.Where(c => field.Admits(c.Value, values, sets) && !chosen.Contains(c.Value)) ?? [])
             .Concat(keyed.Where(c => !c.Trusted))
             .Concat(frequent.Take(1))
             .Concat(similar.Where(c => !c.Trusted))
@@ -267,10 +267,18 @@ public sealed class FormResolver
     /// the documents behind it, and what the lookup found. The document itself is never its own evidence: one more is
     /// asked for, and it is passed over. When the most similar document's value lies outside the field's domain the layer
     /// offers nothing, rather than a less similar document's — the one rule a replay reproduces with any memory, since a
-    /// memory need rank only the nearest — and documents outside it are not reported.
+    /// memory need rank only the nearest — and documents outside it are not reported. The domain is the document's: it is
+    /// narrowed by <paramref name="values"/> and <paramref name="sets"/> when the field takes its candidates from another.
     /// </summary>
     private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
-        FieldDefinition field, string documentId, string task, string evidence, string traceId, CancellationToken cancellationToken)
+        FieldDefinition field,
+        string documentId,
+        string task,
+        string evidence,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> sets,
+        string traceId,
+        CancellationToken cancellationToken)
     {
         if (DocumentMemory is not IMemory memory || evidence.Length == 0 || field.Multiple)
         {
@@ -289,10 +297,10 @@ public sealed class FormResolver
             }
 
             var match = others[0];
-            var admitted = field.Admits(match.Answer);
+            var admitted = field.Admits(match.Answer, values, sets);
             var hit = admitted && match.Similarity >= threshold;
             var recall = new Recall(match.Source, match.Similarity, threshold, hit);
-            var neighbours = others.Where(m => field.Admits(m.Answer)).Take(SimilarDocumentCount).ToList();
+            var neighbours = others.Where(m => field.Admits(m.Answer, values, sets)).Take(SimilarDocumentCount).ToList();
             return (admitted ? [new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)] : [], neighbours, recall, energy);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
