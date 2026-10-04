@@ -3,6 +3,26 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Added
+
+- **Judged fields can take several values.** `FieldDefinition.Multiple` marks a field whose value is a set; its values
+  are settled in `SettledDocument.Sets` (`SettledDocument.Validate` checks that each field is kept where its kind
+  belongs), with `Settlement.Set` and `Settlement.Restore(values)`. The settled field memory remembers each value on
+  its own — one document's values weigh alike, as one settlement — and suggests each on its own, so several
+  candidates can each be trusted; the values already chosen are evidence for the rest (`FieldMemory.Rank`'s
+  `knownSets`) and are not offered again. A form session keeps the field open once settled, `FormResolver.SuggestAsync`
+  has an overload that takes the chosen values, each value of a set is a key and an evidence line of its own for other
+  fields, and `ThresholdSelection.SelectKeyThreshold` replays the values as picked one after another. The similar
+  document layer does not suggest such a field, so it takes no `MemoryThreshold`. Nothing changes for forms without
+  one.
+
+### Changed
+
+- **Threshold replays ask with the sets that had arrived before the field.** A single-valued field whose evidence
+  includes a field with several values is now replayed with that field's values as keys, as it is suggested.
+
 ## 0.12.0
 
 ### Added

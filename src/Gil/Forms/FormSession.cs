@@ -9,12 +9,15 @@ namespace Gil.Forms;
 /// A settled value can be settled again: accepting a suggestion and correcting it later leaves only the correction in
 /// memory, because the document's contribution is always what its current values imply. Accepting or correcting a field
 /// moves the document's settlement time to the present; observing, restoring, rejecting and reverting do not. A rejected field is not
-/// suggested again until it is reverted or settled. Not thread-safe.
+/// suggested again until it is reverted or settled. A field that takes several values (<see cref="FieldDefinition.Multiple"/>)
+/// stays open once settled: the values chosen so far are evidence for the rest, which go on being suggested — settling it
+/// again with more or fewer values replaces them. Not thread-safe.
 /// </remarks>
 public sealed class FormSession
 {
     private readonly FormResolver _resolver;
     private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<string>> _sets = new(StringComparer.Ordinal);
     private readonly HashSet<string> _rejected = new(StringComparer.Ordinal);
     private readonly List<string> _arrival = []; // fields with a value, in the order their current values arrived
     private DateTimeOffset _settledAt;
@@ -46,32 +49,51 @@ public sealed class FormSession
     /// Settles a judged field and returns fresh suggestions for the open judged fields whose evidence changed — and for the
     /// field itself when a revert reopened it.
     /// </summary>
-    /// <exception cref="ArgumentException">The field is not a judged field of the form.</exception>
+    /// <exception cref="ArgumentException">
+    /// The field is not a judged field of the form, or the settlement is of the other kind of field: values of a set for a
+    /// single-valued field, or a single value for a field that takes several.
+    /// </exception>
     public async Task<IReadOnlyList<FieldSuggestion>> SettleAsync(string field, Settlement settlement, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settlement);
-        if (Form.Field(field).Role != FieldRole.Judged)
+        var definition = Form.Field(field);
+        if (definition.Role != FieldRole.Judged)
         {
             throw new ArgumentException($"'{field}' is observed; observe it instead.", nameof(field));
         }
 
-        _rejected.Remove(field);
-        switch (settlement.Kind)
+        var clears = settlement.Kind is SettlementKind.Reject or SettlementKind.Revert;
+        if (!clears && settlement.IsSet != definition.Multiple)
         {
-            case SettlementKind.Reject:
-                Set(field, null);
+            throw new ArgumentException(
+                definition.Multiple ? $"'{field}' takes several values; settle it with Settlement.Set." : $"'{field}' takes one value; settle it with a single value.",
+                nameof(settlement));
+        }
+
+        _rejected.Remove(field);
+        if (clears)
+        {
+            Clear(field);
+            if (settlement.Kind == SettlementKind.Reject)
+            {
                 _rejected.Add(field);
-                break;
-            case SettlementKind.Revert:
-                Set(field, null);
-                break;
-            case SettlementKind.Restore:
-                Set(field, settlement.Value); // a saved value keeps the saved document's time
-                break;
-            default:
+            }
+        }
+        else
+        {
+            if (definition.Multiple)
+            {
+                SetMany(field, settlement.Values!);
+            }
+            else
+            {
                 Set(field, settlement.Value);
-                _settledAt = _resolver.Time.GetUtcNow();
-                break;
+            }
+
+            if (settlement.Kind != SettlementKind.Restore)
+            {
+                _settledAt = _resolver.Time.GetUtcNow(); // a saved value keeps the saved document's time
+            }
         }
 
         return await ChangedAsync(field, reopened: settlement.Kind == SettlementKind.Revert, cancellationToken).ConfigureAwait(false);
@@ -95,7 +117,30 @@ public sealed class FormSession
     /// the values arrived in, by which choosing thresholds replays the document.
     /// </summary>
     public SettledDocument Snapshot() =>
-        new(DocumentId, new Dictionary<string, string>(_values, StringComparer.Ordinal), _settledAt, [.. _arrival]);
+        new(DocumentId, new Dictionary<string, string>(_values, StringComparer.Ordinal), _settledAt, [.. _arrival])
+        {
+            Sets = new Dictionary<string, IReadOnlyList<string>>(_sets, StringComparer.Ordinal),
+        };
+
+    private void Clear(string field)
+    {
+        _sets.Remove(field);
+        Set(field, null);
+    }
+
+    /// <summary>A set field's values: they arrive together, as one value would — the field holds one place in the arrival order.</summary>
+    private void SetMany(string field, IReadOnlyList<string> values)
+    {
+        _arrival.Remove(field);
+        if (values.Count == 0)
+        {
+            _sets.Remove(field);
+            return;
+        }
+
+        _sets[field] = values;
+        _arrival.Add(field);
+    }
 
     private void Set(string field, string? value)
     {
@@ -117,7 +162,8 @@ public sealed class FormSession
         var suggestions = new List<FieldSuggestion>();
         foreach (var field in Form.Fields.Where(IsOpen))
         {
-            if (Form.Supports(changed, field.Name) || (reopened && field.Name == changed))
+            // A set's own chosen values are evidence for the rest of it.
+            if (Form.Supports(changed, field.Name) || (field.Name == changed && (reopened || field.Multiple)))
             {
                 suggestions.Add(await SuggestAsync(field, cancellationToken).ConfigureAwait(false));
             }
@@ -129,9 +175,9 @@ public sealed class FormSession
     private bool IsOpen(FieldDefinition field) =>
         field.Role == FieldRole.Judged
         && field.Policy != FieldPolicy.Off
-        && !_values.ContainsKey(field.Name)
+        && (field.Multiple || !_values.ContainsKey(field.Name))
         && !_rejected.Contains(field.Name);
 
     private Task<FieldSuggestion> SuggestAsync(FieldDefinition field, CancellationToken cancellationToken) =>
-        _resolver.SuggestFieldAsync(Form, DocumentId, _values, field, cancellationToken, _arrival);
+        _resolver.SuggestFieldAsync(Form, DocumentId, _values, field, cancellationToken, _arrival, _sets);
 }

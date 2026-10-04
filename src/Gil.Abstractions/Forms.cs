@@ -80,6 +80,20 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     /// own value is still recorded and settled as usual.
     /// </summary>
     public bool UseAsEvidence { get; init; } = true;
+
+    /// <summary>
+    /// True makes a judged field's value a set: several values, in no order, such as tags, the topics a document covers or
+    /// the answers of a multiple-choice question. Its values are settled in <see cref="SettledDocument.Sets"/>, never in
+    /// <see cref="SettledDocument.Values"/>. Each value is remembered on its own — a document with three values settles
+    /// each of the three under every key — and is suggested on its own, so several candidates may each be trusted.
+    /// Values of the field already chosen are evidence for the rest, whatever <see cref="DependsOn"/> and
+    /// <see cref="UseAsEvidence"/> say, which govern evidence between fields; as evidence for another field, each value is a
+    /// key of its own. <see cref="Candidates"/> lists the values each element may take. A value that has a main one among
+    /// several is better a second, single-valued field. The settled field memory and a model suggest such a field; the
+    /// similar document layer does not — a document memory holds one value per document — so it takes no
+    /// <see cref="MemoryThreshold"/>.
+    /// </summary>
+    public bool Multiple { get; init; }
 }
 
 /// <summary>A form: the fields a document of it has, and the language a model reads it in.</summary>
@@ -89,8 +103,9 @@ public sealed record FormDefinition
     /// <param name="fields">At least one judged field; names unique.</param>
     /// <param name="language">The wording model calls for this form are made in.</param>
     /// <exception cref="ArgumentException">
-    /// A duplicate field name, no judged field, or a <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the
-    /// field itself, or a field that is not evidence.
+    /// A duplicate field name, no judged field, an observed field marked <see cref="FieldDefinition.Multiple"/> or such a
+    /// field with a <see cref="FieldDefinition.MemoryThreshold"/>, or a
+    /// <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the field itself, or a field that is not evidence.
     /// </exception>
     public FormDefinition(string name, IReadOnlyList<FieldDefinition> fields, PromptLanguage language)
     {
@@ -112,6 +127,16 @@ public sealed record FormDefinition
         if (!fields.Any(f => f.Role == FieldRole.Judged))
         {
             throw new ArgumentException("A form needs at least one judged field.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.Multiple && f.Role != FieldRole.Judged) is { } observedSet)
+        {
+            throw new ArgumentException($"Field '{observedSet.Name}' is observed; only a judged field can take several values.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.Multiple && f.MemoryThreshold is not null) is { } rememberedSet)
+        {
+            throw new ArgumentException($"Field '{rememberedSet.Name}' takes several values; the similar document layer does not suggest it, so it takes no memory threshold.", nameof(fields));
         }
 
         foreach (var field in fields)
@@ -178,7 +203,38 @@ public sealed record SettledDocument(
     string DocumentId,
     IReadOnlyDictionary<string, string> Values,
     DateTimeOffset SettledAt,
-    IReadOnlyList<string>? Arrival = null);
+    IReadOnlyList<string>? Arrival = null)
+{
+    /// <summary>
+    /// Field name to the values of a field that takes several (<see cref="FieldDefinition.Multiple"/>); such a field is
+    /// never in <see cref="Values"/>. Order and repeats carry no meaning. A field without values is absent, or empty.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Sets { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Checks that the document keeps each field of <paramref name="form"/> where its kind belongs: a field that takes
+    /// several values only in <see cref="Sets"/>, any other field only in <see cref="Values"/>. Names the form does not
+    /// have are left alone, as everywhere.
+    /// </summary>
+    /// <exception cref="ArgumentException">A field of the form is kept where its kind does not belong.</exception>
+    public void Validate(FormDefinition form)
+    {
+        ArgumentNullException.ThrowIfNull(form);
+        foreach (var field in form.Fields)
+        {
+            if (field.Multiple && Values.ContainsKey(field.Name))
+            {
+                throw new ArgumentException($"Field '{field.Name}' takes several values; settle them in Sets, not Values.", nameof(form));
+            }
+
+            if (!field.Multiple && Sets.ContainsKey(field.Name))
+            {
+                throw new ArgumentException($"Field '{field.Name}' takes one value; settle it in Values, not Sets.", nameof(form));
+            }
+        }
+    }
+}
 
 /// <summary>The layer a suggested value came from.</summary>
 public enum FieldSource
@@ -301,17 +357,33 @@ public enum SettlementKind
     /// acceptance or correction; the value itself is a settled value like any other.
     /// </summary>
     Restore,
+
+    /// <summary>
+    /// The values of a field that takes several (<see cref="FieldDefinition.Multiple"/>) were settled — whichever of them
+    /// were suggested and whichever a person added. Settling the field again replaces them.
+    /// </summary>
+    Set,
 }
 
-/// <summary>A settlement of one judged field. Accepting is not the same as being right: settling the field again later corrects it.</summary>
+/// <summary>
+/// A settlement of one judged field. Accepting is not the same as being right: settling the field again later corrects it.
+/// A field that takes several values (<see cref="FieldDefinition.Multiple"/>) is settled with <see cref="Set"/>, restored
+/// with <see cref="Restore(IEnumerable{string})"/>, and rejected or reverted as any other.
+/// </summary>
 public sealed record Settlement
 {
-    private Settlement(SettlementKind kind, string? value) => (Kind, Value) = (kind, value);
+    private Settlement(SettlementKind kind, string? value, IReadOnlyList<string>? values = null) => (Kind, Value, Values) = (kind, value, values);
 
     public SettlementKind Kind { get; }
 
-    /// <summary>The settled value; null for <see cref="SettlementKind.Reject"/> and <see cref="SettlementKind.Revert"/>.</summary>
+    /// <summary>The settled value of a single-valued field; null for <see cref="SettlementKind.Reject"/>, <see cref="SettlementKind.Revert"/> and settlements of a set.</summary>
     public string? Value { get; }
+
+    /// <summary>The settled values of a field that takes several, once each and ordinally; null for a single-valued field's settlement, <see cref="SettlementKind.Reject"/> and <see cref="SettlementKind.Revert"/>.</summary>
+    public IReadOnlyList<string>? Values { get; }
+
+    /// <summary>Whether this settles a field that takes several values.</summary>
+    public bool IsSet => Values is not null;
 
     public static Settlement Accept(string value) => new(SettlementKind.Accept, Required(value));
 
@@ -322,6 +394,18 @@ public sealed record Settlement
     public static Settlement Revert() => new(SettlementKind.Revert, null);
 
     public static Settlement Restore(string value) => new(SettlementKind.Restore, Required(value));
+
+    /// <summary>Settles a field that takes several values with these — none at all clears it. Order and repeats carry no meaning.</summary>
+    public static Settlement Set(IEnumerable<string> values) => new(SettlementKind.Set, null, Elements(values));
+
+    /// <summary>Puts back the saved values of a field that takes several, as <see cref="Restore(string)"/> does for one.</summary>
+    public static Settlement Restore(IEnumerable<string> values) => new(SettlementKind.Restore, null, Elements(values));
+
+    private static string[] Elements(IEnumerable<string> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return [.. values.Select(Required).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+    }
 
     private static string Required(string value)
     {

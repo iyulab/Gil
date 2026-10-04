@@ -78,7 +78,7 @@ public sealed class FormResolver
 
     /// <summary>
     /// Opens a document of the form. Put back a saved document's values with <see cref="FormSession.ObserveAsync"/> and
-    /// <see cref="Settlement.Restore"/>, and pass its <see cref="SettledDocument.SettledAt"/>: restoring does not make old
+    /// <see cref="Settlement.Restore(string)"/> (or <see cref="Settlement.Restore(IEnumerable{string})"/> for a set), and pass its <see cref="SettledDocument.SettledAt"/>: restoring does not make old
     /// values new, and only accepting or correcting a field moves the document's settlement time on.
     /// </summary>
     /// <param name="form">The form.</param>
@@ -109,7 +109,7 @@ public sealed class FormResolver
         {
             if (DocumentMemory is IEmbeddingPrefetch prefetch)
             {
-                var texts = group.SelectMany(d => judged.Where(f => d.Values.ContainsKey(f.Name)).Select(f => Evidence(form, f.Name, d.Values)));
+                var texts = group.SelectMany(d => judged.Where(f => d.Values.ContainsKey(f.Name)).Select(f => Evidence(form, f.Name, d.Values, d.Sets)));
                 try
                 {
                     energy += await prefetch.PrefetchAsync(texts, traceId, cancellationToken).ConfigureAwait(false);
@@ -146,23 +146,43 @@ public sealed class FormResolver
     /// <param name="documentId">The document asked about; opaque, as in <see cref="Open"/>.</param>
     /// <param name="values">The document's values as they stand — observed and judged alike.</param>
     /// <param name="cancellationToken">Cancels the calls made.</param>
+    public Task<IReadOnlyList<FieldSuggestion>> SuggestAsync(
+        FormDefinition form,
+        string documentId,
+        IReadOnlyDictionary<string, string> values,
+        CancellationToken cancellationToken = default) =>
+        SuggestAsync(form, documentId, values, NoSets, cancellationToken);
+
+    /// <summary>
+    /// As <see cref="SuggestAsync(FormDefinition, string, IReadOnlyDictionary{string, string}, CancellationToken)"/>, for a form
+    /// with fields that take several values: <paramref name="sets"/> holds the values chosen so far of each such field. A
+    /// field that takes several values is suggested whether or not some are chosen — the rest, with the chosen ones as
+    /// evidence.
+    /// </summary>
+    /// <exception cref="ArgumentException">A field is given where its kind does not belong (<see cref="SettledDocument.Validate"/>).</exception>
     public async Task<IReadOnlyList<FieldSuggestion>> SuggestAsync(
         FormDefinition form,
         string documentId,
         IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> sets,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(form);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
         ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(sets);
+        new SettledDocument(documentId, values, default) { Sets = sets }.Validate(form);
         var suggestions = new List<FieldSuggestion>();
-        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged && f.Policy != FieldPolicy.Off && !values.ContainsKey(f.Name)))
+        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged && f.Policy != FieldPolicy.Off && (f.Multiple || !values.ContainsKey(f.Name))))
         {
-            suggestions.Add(await SuggestFieldAsync(form, documentId, values, field, cancellationToken).ConfigureAwait(false));
+            suggestions.Add(await SuggestFieldAsync(form, documentId, values, field, cancellationToken, sets: sets).ConfigureAwait(false));
         }
 
         return suggestions;
     }
+
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> NoSets =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
     /// <summary>
     /// One field's suggestion. Layers that answer come first — values under a key strong enough
@@ -170,7 +190,8 @@ public sealed class FormResolver
     /// and a model where neither memory had anything — then guesses: values under weaker keys, the field's most frequent
     /// value, the nearest document below the threshold, the field's other values. <c>arrival</c> is the order the document's values arrived in,
     /// oldest first — the order a model sees its evidence in; null when the caller has no history (a stateless
-    /// suggestion), and the form's order then.
+    /// suggestion), and the form's order then. <c>sets</c> holds the values chosen so far of fields that take several; for
+    /// such a field itself, its chosen values are evidence and are not offered again.
     /// </summary>
     internal async Task<FieldSuggestion> SuggestFieldAsync(
         FormDefinition form,
@@ -178,16 +199,19 @@ public sealed class FormResolver
         IReadOnlyDictionary<string, string> values,
         FieldDefinition field,
         CancellationToken cancellationToken,
-        IReadOnlyList<string>? arrival = null)
+        IReadOnlyList<string>? arrival = null,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? sets = null)
     {
         var started = Stopwatch.GetTimestamp();
         var traceId = Guid.NewGuid().ToString("N");
         var task = TaskName(form, field.Name);
-        var evidence = EvidenceValues(form, field.Name, values);
+        sets ??= NoSets;
+        var evidence = EvidenceValues(form, field.Name, values, sets);
         var lines = Lines(evidence);
         Sink?.OpenTrace(traceId, task, lines); // opened first: a model resolving under the same id closes it
 
-        var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId);
+        var chosen = field.Multiple && sets.TryGetValue(field.Name, out var picked) ? new HashSet<string>(picked, StringComparer.Ordinal) : [];
+        var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId, knownSets: sets);
         var keyed = remembered.Where(c => c.Evidence is not null).ToList();
         var (similar, neighbours, recall, energy) = await SimilarAsync(field, documentId, task, lines, traceId, cancellationToken).ConfigureAwait(false);
 
@@ -206,7 +230,7 @@ public sealed class FormResolver
         var frequent = remembered.Where(c => c.Evidence is null).ToList();
         var candidates = keyed.Where(c => c.Trusted)
             .Concat(similar.Where(c => c.Trusted))
-            .Concat(modelled?.Candidates.Where(c => field.Admits(c.Value)) ?? [])
+            .Concat(modelled?.Candidates.Where(c => field.Admits(c.Value) && !chosen.Contains(c.Value)) ?? [])
             .Concat(keyed.Where(c => !c.Trusted))
             .Concat(frequent.Take(1))
             .Concat(similar.Where(c => !c.Trusted))
@@ -224,7 +248,8 @@ public sealed class FormResolver
             sink.CloseTrace(traceId, new TraceOutcome
             {
                 Mode = answered ? Mode(source) : "abstain",
-                Output = answered ? candidates[0].Value : null,
+                // A set's answer is every value trusted on its own score, one per line, best first.
+                Output = !answered ? null : field.Multiple ? string.Join("\n", candidates.Where(c => c.Trusted).Select(c => c.Value)) : candidates[0].Value,
                 Confidence = confidence,
                 Energy = energy,
                 Recall = recall,
@@ -247,9 +272,9 @@ public sealed class FormResolver
     private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
         FieldDefinition field, string documentId, string task, string evidence, string traceId, CancellationToken cancellationToken)
     {
-        if (DocumentMemory is not IMemory memory || evidence.Length == 0)
+        if (DocumentMemory is not IMemory memory || evidence.Length == 0 || field.Multiple)
         {
-            return ([], [], null, 0);
+            return ([], [], null, 0); // a document memory holds one value per document: it has nothing for a set
         }
 
         var threshold = field.MemoryThreshold;
@@ -303,7 +328,7 @@ public sealed class FormResolver
             }
 
             var entry = document.Values.TryGetValue(field.Name, out var value)
-                ? new CaseEntry(document.DocumentId, Evidence(form, field.Name, document.Values), value, document.SettledAt)
+                ? new CaseEntry(document.DocumentId, Evidence(form, field.Name, document.Values, document.Sets), value, document.SettledAt)
                 : null;
             var (forget, remember) = cases.Put(document.DocumentId, entry);
             foreach (var id in forget)
@@ -443,11 +468,33 @@ public sealed class FormResolver
     /// <summary>The task a field's document memory, statistics and traces are kept under.</summary>
     internal static string TaskName(FormDefinition form, string field) => $"{form.Name}/{field}";
 
-    /// <summary>The values of the fields that support <paramref name="field"/>, in the form's order.</summary>
-    internal static List<KeyValuePair<string, string>> EvidenceValues(FormDefinition form, string field, IReadOnlyDictionary<string, string> values) =>
-        [.. form.Fields
-            .Where(f => form.Supports(f.Name, field) && values.ContainsKey(f.Name))
-            .Select(f => KeyValuePair.Create(f.Name, values[f.Name]))];
+    /// <summary>
+    /// The values of the fields that support <paramref name="field"/>, in the form's order — a field that takes several
+    /// values gives a line for each, ordinally, so the same set reads the same; a field that takes several is supported by
+    /// its own values chosen so far.
+    /// </summary>
+    internal static List<KeyValuePair<string, string>> EvidenceValues(
+        FormDefinition form, string field, IReadOnlyDictionary<string, string> values, IReadOnlyDictionary<string, IReadOnlyList<string>>? sets = null)
+    {
+        var target = form.Field(field);
+        var evidence = new List<KeyValuePair<string, string>>();
+        foreach (var f in form.Fields.Where(f => form.Supports(f.Name, field) || (f.Name == field && target.Multiple)))
+        {
+            if (f.Multiple)
+            {
+                if (sets is not null && sets.TryGetValue(f.Name, out var elements))
+                {
+                    evidence.AddRange(elements.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Select(e => KeyValuePair.Create(f.Name, e)));
+                }
+            }
+            else if (values.TryGetValue(f.Name, out var value))
+            {
+                evidence.Add(KeyValuePair.Create(f.Name, value));
+            }
+        }
+
+        return evidence;
+    }
 
     /// <summary>
     /// Evidence re-ordered to the order its values arrived in. Memory lookups keep the form's order — they match content, and
@@ -466,8 +513,9 @@ public sealed class FormResolver
     }
 
     /// <summary>The <c>name: value</c> lines of the fields that support <paramref name="field"/>, in the form's order.</summary>
-    internal static string Evidence(FormDefinition form, string field, IReadOnlyDictionary<string, string> values) =>
-        Lines(EvidenceValues(form, field, values));
+    internal static string Evidence(
+        FormDefinition form, string field, IReadOnlyDictionary<string, string> values, IReadOnlyDictionary<string, IReadOnlyList<string>>? sets = null) =>
+        Lines(EvidenceValues(form, field, values, sets));
 
     /// <summary>Evidence as <c>name: value</c> lines — the request a similar document is looked up by, and a model's input.</summary>
     internal static string Lines(IEnumerable<KeyValuePair<string, string>> evidence) =>

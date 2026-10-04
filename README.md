@@ -446,6 +446,32 @@ saved about half of the keystrokes a person would type into the judged fields, a
 shown once and not filtered. One typed letter put the settled value first about half the time, against three times in
 eight before typing.
 
+A judged field can take several values — tags, the topics a document covers, the answers to a multiple-choice
+question. Mark it `Multiple`; its values are settled as a set, in `SettledDocument.Sets` rather than `Values`, and
+order carries no meaning. Each value is remembered and suggested on its own, so several candidates can each be trusted
+against `KeyThreshold`, and the values a person has already chosen are evidence for the rest. A session keeps such a
+field open after it is settled and goes on suggesting the remaining values:
+
+```csharp
+var paper = new FormDefinition("paper",
+[
+    new FieldDefinition("venue", FieldRole.Observed),
+    new FieldDefinition("topics", FieldRole.Judged) { Multiple = true, KeyThreshold = 0.8 },
+], PromptLanguage.English);
+
+var session = forms.Open(paper, "papers/0107");
+await session.ObserveAsync("venue", "ACL");
+var rest = await session.SettleAsync("topics", Settlement.Set(["parsing"]));   // suggests the other topics
+var saved = session.Snapshot();                                                 // saved.Sets["topics"]
+```
+
+Choose its threshold with `SelectKeyThreshold`, which replays each document as values are picked one after another.
+A value that has a main one among several is better a second, single-valued field. The similar document layer does not
+suggest a field with several values, so such a field takes no `MemoryThreshold`. Replaying a public collection of
+patents, each classified into one or more of 37 technology classes, with one class of a document chosen, using the
+chosen class as evidence put a remaining class first slightly more often (0.46 against 0.44) and trusted about one and
+a half times as many of the remaining classes at the same precision (0.79 against a target of 0.8).
+
 ## Build and test
 
 Requires the .NET 10 SDK.

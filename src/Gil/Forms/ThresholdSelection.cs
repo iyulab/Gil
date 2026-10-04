@@ -88,6 +88,7 @@ public static class ThresholdSelection
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(documents);
         Check(form, field, targetPrecision, minimumAnswered);
+        NotASet(form, field);
 
         var steps = await ReplayAsync(null, memory, form, field, documents, cancellationToken).ConfigureAwait(false);
         return Similarity(steps.Where(s => s.Looked), targetPrecision, minimumAnswered);
@@ -128,6 +129,7 @@ public static class ThresholdSelection
         ArgumentNullException.ThrowIfNull(form);
         ArgumentNullException.ThrowIfNull(documents);
         Check(form, field, targetPrecision, minimumAnswered);
+        NotASet(form, field);
 
         var steps = await ReplayAsync(fieldMemory, memory, form, field, documents, cancellationToken).ConfigureAwait(false);
         var keyed = steps.Where(s => s.KeyLooked).ToList();
@@ -151,6 +153,15 @@ public static class ThresholdSelection
     /// the same documents answering each other well do not lower the score that a weakly backed value needs. The key layer
     /// is consulted first, on every lookup, so this is right on its own; <see cref="SelectLayersAsync"/> chooses it the
     /// same way together with the memory threshold.
+    /// <para>
+    /// A field that takes several values (<see cref="FieldDefinition.Multiple"/>) trusts each value on its own score, so
+    /// every value offered under the keys counts, right when it is one of the settled values not yet chosen. A person
+    /// picks such values one after another, and those chosen are evidence for the rest, so each document is asked about
+    /// once with none of its values chosen, then again after each but the last is chosen — in a fixed order that depends
+    /// on the document and its values but not on the order they are listed in. <see cref="ThresholdChoice.Lookups"/> then
+    /// counts the values sought — those not yet chosen, summed over the times the document is asked about — and
+    /// <see cref="ThresholdChoice.AnswerRate"/> the values answered per value sought.
+    /// </para>
     /// </summary>
     /// <param name="memory">An empty field memory configured as the one in use; the replay fills it. Never the one serving suggestions.</param>
     /// <param name="form">The form.</param>
@@ -171,6 +182,7 @@ public static class ThresholdSelection
         ArgumentNullException.ThrowIfNull(documents);
         Check(form, field, targetPrecision, minimumAnswered);
 
+        var multiple = form.Field(field).Multiple;
         var matches = new List<(double Score, bool Correct)>();
         var lookups = 0;
         var ordered = documents
@@ -178,7 +190,9 @@ public static class ThresholdSelection
             .ThenBy(d => d.DocumentId, StringComparer.Ordinal); // the order the field memory weighs settlements in
         foreach (var document in ordered)
         {
-            if (!document.Values.TryGetValue(field, out var settled))
+            var settledSet = multiple ? PickOrder(document, field) : [];
+            string? settled = null;
+            if (multiple ? settledSet.Count == 0 : !document.Values.TryGetValue(field, out settled))
             {
                 continue;
             }
@@ -186,10 +200,24 @@ public static class ThresholdSelection
             memory.Remove(form.Name, document.DocumentId); // a document settled again is not its own evidence
             if (memory.Count(form.Name) > 0)
             {
-                lookups++;
-                if (memory.First(form, field, Before(form, document, field), settled) is { } first)
+                var (before, beforeSets) = (Before(form, document, field), BeforeSets(form, document, field));
+                if (!multiple)
                 {
-                    matches.Add((first.Score, first.Matches));
+                    lookups++;
+                    if (memory.First(form, field, before, settled!, beforeSets) is { } first)
+                    {
+                        matches.Add((first.Score, first.Matches));
+                    }
+                }
+                else
+                {
+                    for (var chosen = 0; chosen < settledSet.Count; chosen++)
+                    {
+                        var sets = new Dictionary<string, IReadOnlyList<string>>(beforeSets, StringComparer.Ordinal) { [field] = settledSet[..chosen] };
+                        var sought = new HashSet<string>(settledSet[chosen..], StringComparer.Ordinal);
+                        lookups += sought.Count;
+                        matches.AddRange(memory.Scored(form, field, before, sets).Select(s => (s.Score, sought.Contains(s.Value))));
+                    }
                 }
             }
 
@@ -197,6 +225,27 @@ public static class ThresholdSelection
         }
 
         return Fit(matches, lookups, targetPrecision, minimumAnswered);
+    }
+
+    /// <summary>
+    /// A set field's settled values, once each, in the order a replay supposes they were picked: fixed by the document id
+    /// and the value, so it depends neither on the order the values are listed in nor on their ordinal order.
+    /// </summary>
+    private static List<string> PickOrder(SettledDocument document, string field) =>
+        document.Sets.TryGetValue(field, out var values)
+            ? [.. values.Distinct(StringComparer.Ordinal).OrderBy(v => Fnv1a($"{document.DocumentId}\u001f{v}")).ThenBy(v => v, StringComparer.Ordinal)]
+            : [];
+
+    /// <summary>A stable 64-bit FNV-1a hash of the text's UTF-16 code units — the same on every run and platform.</summary>
+    private static ulong Fnv1a(string text)
+    {
+        var hash = 14695981039346656037UL;
+        foreach (var c in text)
+        {
+            hash = (hash ^ c) * 1099511628211UL;
+        }
+
+        return hash;
     }
 
     /// <summary>
@@ -320,14 +369,14 @@ public static class ThresholdSelection
             }
 
             // Asked with what the field's last suggestion saw; remembered, below, with everything, as the resolver remembers.
-            var before = Before(form, document, field);
+            var (before, beforeSets) = (Before(form, document, field), BeforeSets(form, document, field));
             var keyLooked = fieldMemory is not null && fieldMemory.Count(form.Name) > 0;
-            var first = keyLooked ? fieldMemory!.First(form, field, before, settled) : null;
-            var evidence = FormResolver.Evidence(form, field, document.Values);
+            var first = keyLooked ? fieldMemory!.First(form, field, before, settled, beforeSets) : null;
+            var evidence = FormResolver.Evidence(form, field, document.Values, document.Sets);
             (double, bool)? match = null;
             if (remembered > 0)
             {
-                var asked = FormResolver.Evidence(form, field, before);
+                var asked = FormResolver.Evidence(form, field, before, beforeSets);
                 var (found, _) = await memory.LookupAsync(task, asked, traceId, cancellationToken).ConfigureAwait(false);
                 // As a suggestion does, a nearest document whose value lies outside the field's domain offers nothing.
                 match = found is null || !definition.Admits(found.Answer) ? null : (found.Similarity, found.Answer == settled);
@@ -356,7 +405,14 @@ public static class ThresholdSelection
     /// The document's values that had arrived before <paramref name="field"/> was settled — what its last suggestion was
     /// made from. <see cref="SettledDocument.Arrival"/> says how an unknown order and fields it leaves out are read.
     /// </summary>
-    internal static IReadOnlyDictionary<string, string> Before(FormDefinition form, SettledDocument document, string field)
+    internal static IReadOnlyDictionary<string, string> Before(FormDefinition form, SettledDocument document, string field) =>
+        Arrived(form, document, field, document.Values);
+
+    /// <summary>The document's sets that had arrived before <paramref name="field"/> was settled, read as <see cref="Before"/> reads values.</summary>
+    internal static IReadOnlyDictionary<string, IReadOnlyList<string>> BeforeSets(FormDefinition form, SettledDocument document, string field) =>
+        Arrived(form, document, field, document.Sets);
+
+    private static Dictionary<string, T> Arrived<T>(FormDefinition form, SettledDocument document, string field, IReadOnlyDictionary<string, T> values)
     {
         int Rank(string name)
         {
@@ -371,16 +427,16 @@ public static class ThresholdSelection
         }
 
         var own = Rank(field);
-        var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (name, value) in document.Values)
+        var arrived = new Dictionary<string, T>(StringComparer.Ordinal);
+        foreach (var (name, value) in values)
         {
             if (name != field && Rank(name) < own)
             {
-                values[name] = value;
+                arrived[name] = value;
             }
         }
 
-        return values;
+        return arrived;
     }
 
     private static int IndexOf(IReadOnlyList<string> names, string name)
@@ -414,6 +470,15 @@ public static class ThresholdSelection
     {
         var steps = looked.ToList();
         return Fit([.. steps.Where(s => s.Match is not null).Select(s => s.Match!.Value)], steps.Count, targetPrecision, minimumAnswered);
+    }
+
+    /// <summary>The similar document layer does not suggest a field that takes several values, so it has no threshold to choose.</summary>
+    private static void NotASet(FormDefinition form, string field)
+    {
+        if (form.Field(field).Multiple)
+        {
+            throw new ArgumentException($"'{field}' takes several values; the similar document layer does not suggest it — choose its key threshold with SelectKeyThreshold.", nameof(field));
+        }
     }
 
     private static void Check(FormDefinition form, string field, double targetPrecision, int minimumAnswered)
