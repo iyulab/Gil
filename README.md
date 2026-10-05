@@ -444,7 +444,10 @@ suggestion offers only values that begin with the text (ignoring case). Only the
 threshold for that many characters typed, `TypedKeyThresholds`. A person types only where the suggestion before did not
 do, and the documents left are the harder ones, so a threshold chosen on every document promises more than it keeps
 there: choose them with `SelectTypedKeyThresholds`, after `KeyThreshold`, which replays each document as typed from its
-start and chooses each length's threshold on the documents typed that far:
+start and chooses each length's threshold on the documents typed that far. Pass the form as it serves suggestions — the
+field's `DependsOn` and `KeyThreshold` set — since the replay asks the key layer as a suggestion would and leaves to the
+typed thresholds the documents that `KeyThreshold` did not answer rightly; choose `DependsOn` first, then
+`KeyThreshold`, then these:
 
 ```csharp
 var typedTeam = form.Field("team") with { TypedKeyThresholds = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30).Thresholds };
