@@ -455,10 +455,11 @@ var typedTeam = form.Field("team") with { TypedKeyThresholds = ThresholdSelectio
 var whileTyping = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen, new Dictionary<string, IReadOnlyList<string>>(), new Dictionary<string, string> { ["team"] = "ne" });
 ```
 
-Replaying a public stream of settled documents with thresholds chosen this way on its first half, one typed character
-was where nearly all of the gain lay: the judged fields of the second half were answered rightly about ten times as
-often as before typing, at a precision of 0.87 against a target of 0.8, and a person was spared 7% of the characters
-of the settled values, against 1% before. A screen that shows a list rather than one value can instead keep the candidates that begin with the typed
+Replaying a public stream of settled documents with thresholds chosen this way on its first half, the first typed
+character was where most of the gain lay: the judged fields of the second half were answered rightly about thirteen
+times as often as before typing, at a precision of 0.86 against a target of 0.8 — a value kept while typing on counts
+once, so record feedback once per value, not once per question — and a person was spared 9% of the characters of the
+settled values, against 1% before. A person who types on without looking saw no trusted value withdrawn. A screen that shows a list rather than one value can instead keep the candidates that begin with the typed
 text: with twenty candidates, filtering by the typed text saved about half of the keystrokes, against about a third
 when the list was shown once and not filtered.
 
