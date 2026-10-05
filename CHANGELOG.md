@@ -3,6 +3,18 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Changed
+
+- **A value trusted while a person types stays trusted as they type on.** Typed text only narrows the values, so a
+  value trusted with fewer characters typed — or before typing, under `KeyThreshold` — is still the best value, with the
+  same score, while the text leads to it. It was judged again by the threshold for each length, and where that was null
+  (past `TypedKeyThresholds`, or not chosen) the suggestion was withdrawn mid-word. It now stays trusted; other values
+  are held to the threshold for their length as before. `SelectTypedKeyThresholds` leaves out of each length the
+  documents a shorter length trusted a wrong value on that the typed text still leads to, so its thresholds can differ:
+  choose them again after upgrading.
+
 ## 0.13.0
 
 ### Added

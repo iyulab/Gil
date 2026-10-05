@@ -108,10 +108,12 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     /// Thresholds for the key layer while a person types into the field, by how many characters are typed: the first
     /// entry applies once one character is typed, the second at two, and so on. Typed text narrows the candidates to the
     /// values that begin with it (ignoring case); a value under the keys is then trusted when its score reaches the entry
-    /// for that length. Past the list, or where an entry is null, the narrowed values are offered as guesses only. A
-    /// person types into a field only when the suggestion before did not do, so each entry is chosen on the documents
-    /// typed that far: choose them with <c>ThresholdSelection.SelectTypedKeyThresholds</c>, after
-    /// <see cref="KeyThreshold"/>, which they follow. Not for a field that takes several values.
+    /// for that length. A value already trusted with fewer characters typed — or none, under <see cref="KeyThreshold"/> —
+    /// stays trusted while the typed text still leads to it: narrowing leaves its score and its lead unchanged, so it is
+    /// the same suggestion, not a new one to judge again. Past the list, or where an entry is null, other narrowed values
+    /// are offered as guesses only. A person types into a field only when the suggestion before did not do, so each entry
+    /// is chosen on the documents typed that far: choose them with <c>ThresholdSelection.SelectTypedKeyThresholds</c>,
+    /// after <see cref="KeyThreshold"/>, which they follow. Not for a field that takes several values.
     /// </summary>
     public IReadOnlyList<double?>? TypedKeyThresholds { get; init; }
 

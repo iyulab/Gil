@@ -125,7 +125,8 @@ public sealed class FieldMemory
     /// </param>
     /// <param name="typed">
     /// The text a person has typed into the field so far, if any: only values that begin with it (ignoring case) are
-    /// ranked, and the keyed values are held to <see cref="FieldDefinition.KeyThresholdFor"/> that many characters.
+    /// ranked, and the keyed values are held to <see cref="FieldDefinition.KeyThresholdFor"/> that many characters — but
+    /// the best value stays trusted if it was trusted with fewer of them typed, as the text still leads to it.
     /// </param>
     public IReadOnlyList<FieldCandidate> Rank(
         FormDefinition form,
@@ -150,7 +151,8 @@ public sealed class FieldMemory
         typed = string.IsNullOrEmpty(typed) ? null : typed;
         var ranked = Keyed(index, form, definition, known, sets, excluding, typed).Where(s => !chosen.Contains(s.Value)).ToList();
         var threshold = definition.KeyThresholdFor(typed?.Length ?? 0);
-        var layerTrusted = ranked.Count > 0 && ranked[0].Score >= threshold;
+        var layerTrusted = ranked.Count > 0 && (ranked[0].Score >= threshold || (typed is not null && !definition.Multiple && Claimed(
+            Keyed(index, form, definition, known, sets, excluding), definition, typed, ranked[0].Value)));
         var keyed = ranked
             .Take(count)
             .Select(s => new FieldCandidate(
@@ -181,20 +183,51 @@ public sealed class FieldMemory
     }
 
     /// <summary>
-    /// As <see cref="First"/>, with the first <paramref name="typed"/> characters of <paramref name="value"/> typed into
-    /// the field: the best-ranked value that begins with them — what <see cref="FieldDefinition.KeyThresholdFor"/> that
-    /// many characters is compared with; null when no value under the known keys does.
+    /// As <see cref="First"/>, with none, one, … up to <paramref name="longest"/> characters of <paramref name="value"/>
+    /// typed into the field: for each length, the best-ranked value that begins with that much of it — what
+    /// <see cref="FieldDefinition.KeyThresholdFor"/> that many characters is compared with — or null when no value under
+    /// the known keys does.
     /// </summary>
-    internal (double Score, bool Matches)? FirstTyped(
-        FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string value, int typed, IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null)
+    internal (double Score, string Value)?[] Typed(
+        FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string value, int longest, IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null)
     {
+        var best = new (double Score, string Value)?[Math.Min(longest, value.Length) + 1];
         if (!_forms.TryGetValue(form.Name, out var index))
         {
-            return null;
+            return best;
         }
 
-        var ranked = Keyed(index, form, form.Field(field), known, knownSets ?? NoSets, excluding: null, value[..typed]);
-        return ranked.Count > 0 ? (ranked[0].Score, ranked[0].Value == value) : null;
+        var ranked = Keyed(index, form, form.Field(field), known, knownSets ?? NoSets, excluding: null);
+        for (var length = 0; length < best.Length; length++)
+        {
+            var typed = length == 0 ? null : value[..length];
+            var found = ranked.FindIndex(s => Begins(s.Value, typed));
+            best[length] = found < 0 ? null : (ranked[found].Score, ranked[found].Value);
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="value"/>, the best value that begins with the typed text, was already trusted with fewer of
+    /// its characters typed — the best value there too, with a score that reached the threshold for that many. Typed text
+    /// only narrows the values, and a value's score does not change with it, so a value trusted with fewer characters
+    /// typed stays the best for as long as the text still leads to it: it is the same claim, not a new one to judge by the
+    /// threshold for more characters, and withdrawing it would make a suggestion help less the more a person types.
+    /// </summary>
+    private static bool Claimed(List<(string Value, double Score, Key Key)> ranked, FieldDefinition field, string typed, string value)
+    {
+        for (var length = 0; length < typed.Length; length++)
+        {
+            var prefix = length == 0 ? null : typed[..length];
+            var best = ranked.FindIndex(s => Begins(s.Value, prefix));
+            if (best >= 0 && ranked[best].Value == value && ranked[best].Score >= field.KeyThresholdFor(length))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Whether <paramref name="value"/> begins with the text typed so far (ignoring case); always when none is.</summary>

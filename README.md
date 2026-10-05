@@ -441,8 +441,9 @@ often on the documents that followed, at 0.95 against 0.89. It costs one replay 
 When a person starts typing into a judged field, ask again with what has been typed rather than dropping the
 suggestion. `SuggestAsync` takes, for each field being typed into, the text typed so far; the field stays open, and its
 suggestion offers only values that begin with the text (ignoring case). Only the key layer answers then, held to a
-threshold for that many characters typed, `TypedKeyThresholds`. A person types only where the suggestion before did not
-do, and the documents left are the harder ones, so a threshold chosen on every document promises more than it keeps
+threshold for that many characters typed, `TypedKeyThresholds`; a value trusted with fewer characters typed, or
+before typing, stays trusted while the text still leads to it, so typing on never withdraws it. A person types only
+where the suggestion before did not do, and the documents left are the harder ones, so a threshold chosen on every document promises more than it keeps
 there: choose them with `SelectTypedKeyThresholds`, after `KeyThreshold`, which replays each document as typed from its
 start and chooses each length's threshold on the documents typed that far. Pass the form as it serves suggestions — the
 field's `DependsOn` and `KeyThreshold` set — since the replay asks the key layer as a suggestion would and leaves to the

@@ -86,16 +86,52 @@ public sealed class TypedSuggestionTests
     }
 
     [Fact]
-    public async Task Past_the_typed_thresholds_the_narrowed_values_are_guesses()
+    public async Task A_value_trusted_with_fewer_characters_stays_trusted_while_the_text_leads_to_it()
     {
+        // Only one typed character has a threshold. "billing", trusted at "b", is still the best value at "bi", "bil" and
+        // the whole value, with the same score: typing on does not withdraw it.
         var form = Ticket(typedThresholds: [0.25]);
         var resolver = new FormResolver(new FieldMemory());
         await resolver.RebuildAsync(form, History, Ct);
 
-        var suggestion = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("bi"), Ct)).Single();
+        foreach (var text in new[] { "b", "bi", "BIL", "billing" })
+        {
+            var suggestion = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing(text), Ct)).Single();
+            suggestion.Candidates[0].Value.Should().Be("billing");
+            suggestion.Answered.Should().BeTrue(because: $"\"{text}\" still leads to the value trusted at \"b\"");
+        }
+    }
 
-        suggestion.Candidates.Select(c => c.Value).Should().Equal("billing");
+    [Fact]
+    public async Task Past_the_typed_thresholds_a_value_not_trusted_before_is_a_guess()
+    {
+        // At "ba" the best value is "backend", which was never the trusted value with fewer characters typed ("b" trusted
+        // "billing"), and two characters have no threshold.
+        var form = Ticket(typedThresholds: [0.25]);
+        var resolver = new FormResolver(new FieldMemory());
+        await resolver.RebuildAsync(form, History, Ct);
+
+        var suggestion = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("ba"), Ct)).Single();
+
+        suggestion.Candidates.Select(c => c.Value).Should().Equal("backend");
         suggestion.Answered.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_value_trusted_before_typing_stays_trusted_while_it_is_typed()
+    {
+        var form = Ticket(keyThreshold: 0.35); // network scores about 0.40 under channel=phone; no typed thresholds at all
+        var resolver = new FormResolver(new FieldMemory());
+        await resolver.RebuildAsync(form, History, Ct);
+
+        var untyped = (await resolver.SuggestAsync(form, "d9", Phone, Ct)).Single();
+        var typing = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("netw"), Ct)).Single();
+        var elsewhere = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("b"), Ct)).Single();
+
+        untyped.Answered.Should().BeTrue();
+        typing.Candidates[0].Value.Should().Be("network");
+        typing.Answered.Should().BeTrue();
+        elsewhere.Answered.Should().BeFalse(); // "billing" was never trusted, and one character has no threshold
     }
 
     [Fact]
@@ -171,6 +207,26 @@ public sealed class TypedSuggestionTests
         chosen.ByLength[0].Lookups.Should().BeLessThan(everything.ByLength[0].Lookups);
         chosen.ByLength[0].Lookups.Should().Be(documents.Count(d => d.Values["team"] != "network") - 0); // "network" answered rightly at no typing
         everything.ByLength[0].Lookups.Should().Be(documents.Count - 1);
+    }
+
+    [Fact]
+    public void Typed_thresholds_leave_out_the_documents_a_wrong_claim_still_leads_to()
+    {
+        // "network" is trusted before typing. On a "netops" document it is wrong, yet "n", "ne" and "net" still lead to
+        // it: the person sees that same claim, not a new answer, so those lengths are not chosen on that document. From
+        // "neto" on the typing has left it behind and the document counts again. "billing" leaves it at "b".
+        var documents = Enumerable.Range(1, 80)
+            .Select(i => Doc(i, "phone", i % 4 == 0 ? (i % 8 == 0 ? "netops" : "billing") : "network"))
+            .ToList();
+        var form = Ticket(keyThreshold: 0.5);
+
+        var chosen = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), form, "team", documents, 0.8, minimumAnswered: 5, longest: 4);
+
+        var billing = documents.Count(d => d.Values["team"] == "billing");
+        var netops = documents.Count(d => d.Values["team"] == "netops");
+        chosen.ByLength[0].Lookups.Should().Be(billing);
+        chosen.ByLength[2].Lookups.Should().BeLessThanOrEqualTo(billing);
+        chosen.ByLength[3].Lookups.Should().BeGreaterThanOrEqualTo(netops);
     }
 
     [Fact]

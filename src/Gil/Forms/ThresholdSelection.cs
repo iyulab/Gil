@@ -248,7 +248,9 @@ public static class ThresholdSelection
     /// supposes a person who types the settled value from its start: each document is asked about with none of it typed,
     /// against the field's <see cref="FieldDefinition.KeyThreshold"/> as it stands, then with one character, two, up to
     /// <paramref name="longest"/>, and the threshold for each length is chosen as <see cref="SelectKeyThreshold"/> chooses,
-    /// on the documents not yet answered rightly and long enough to type that far. Set
+    /// on the documents not yet answered rightly and long enough to type that far. A document a shorter length trusted a
+    /// wrong value on is left out of each length whose typed text still leads to that value: a suggestion keeps a value
+    /// trusted with fewer characters typed, so the person is shown that same value there, not a new answer. Set
     /// <see cref="FieldDefinition.KeyThreshold"/> first: these thresholds follow it, and must be chosen again when it changes.
     /// </summary>
     /// <param name="memory">An empty field memory configured as the one in use; the replay fills it. Never the one serving suggestions.</param>
@@ -279,9 +281,9 @@ public static class ThresholdSelection
             throw new ArgumentException($"Field '{field}' takes several values; typed key thresholds are for a field that takes one.", nameof(field));
         }
 
-        // Every document asked about: whether the field's key threshold answered it rightly, and what the key layer said
-        // with each length of the settled value typed.
-        var asked = new List<(bool Answered, string Settled, (double Score, bool Matches)?[] Typed)>();
+        // Every document asked about: what the key layer's best value was with none of the settled value typed, then
+        // with each length of it.
+        var asked = new List<Asked>();
         var ordered = documents
             .OrderBy(d => d.SettledAt)
             .ThenBy(d => d.DocumentId, StringComparer.Ordinal); // the order the field memory weighs settlements in
@@ -296,30 +298,35 @@ public static class ThresholdSelection
             if (memory.Count(form.Name) > 0)
             {
                 var (before, beforeSets) = (Before(form, document, field), BeforeSets(form, document, field));
-                var first = memory.First(form, field, before, settled, beforeSets);
-                var answered = first is { Matches: true } && first.Value.Score >= definition.KeyThreshold;
-                var typed = new (double, bool)?[Math.Min(longest, settled.Length)];
-                for (var length = 1; length <= typed.Length; length++)
-                {
-                    typed[length - 1] = memory.FirstTyped(form, field, before, settled, length, beforeSets);
-                }
-
-                asked.Add((answered, settled, typed));
+                asked.Add(new Asked(settled, memory.Typed(form, field, before, settled, longest, beforeSets)));
             }
 
             memory.Put(form, document);
         }
 
+        // A value trusted with fewer characters typed is one claim, kept while the typed text still leads to it (see
+        // FieldMemory.Rank). A document so answered rightly needs no more typing; one answered wrongly by a value that the
+        // next characters still lead to is shown that same claim again, not asked anew, so it is not among the documents a
+        // longer threshold is chosen on until the typing has left that value behind.
+        foreach (var a in asked)
+        {
+            a.Claim(a.Best[0], definition.KeyThreshold);
+        }
+
         var byLength = new List<ThresholdReplay>();
-        var reaching = asked.Where(a => !a.Answered).ToList();
         for (var length = 1; length <= longest; length++)
         {
-            reaching = [.. reaching.Where(a => a.Typed.Length >= length)];
-            var matches = reaching.Select(a => a.Typed[length - 1]).OfType<(double Score, bool Matches)>().Select(m => (m.Score, m.Matches)).ToList();
+            var reaching = asked.Where(a => !a.Right && a.Best.Length > length && !a.Holds(length)).ToList();
+            var matches = reaching
+                .Where(a => a.Best[length] is not null)
+                .Select(a => (a.Best[length]!.Value.Score, a.Best[length]!.Value.Value == a.Settled))
+                .ToList();
             var replay = Fit(matches, reaching.Count, targetPrecision, minimumAnswered);
             byLength.Add(replay);
-            var threshold = replay.Chosen?.Threshold;
-            reaching = [.. reaching.Where(a => !(a.Typed[length - 1] is { Matches: true } m && m.Score >= threshold))];
+            foreach (var a in reaching)
+            {
+                a.Claim(a.Best[length], replay.Chosen?.Threshold);
+            }
         }
 
         return new TypedKeyThresholds(byLength);
@@ -427,6 +434,43 @@ public static class ThresholdSelection
 
     /// <summary>One document of a replay: what the field memory and the document memory held before it said about it.</summary>
     private readonly record struct Step(bool KeyLooked, (double Score, bool Matches)? Key, bool Looked, (double Similarity, bool Correct)? Match);
+
+    /// <summary>
+    /// One document of a typed replay: its settled value, the key layer's best value with none of it typed and with each
+    /// length typed (<see cref="FieldMemory.Typed"/>), and what the thresholds chosen so far claimed for it.
+    /// </summary>
+    private sealed class Asked(string settled, (double Score, string Value)?[] best)
+    {
+        private readonly List<string> _wrong = [];
+
+        public string Settled { get; } = settled;
+
+        public (double Score, string Value)?[] Best { get; } = best;
+
+        /// <summary>Whether a threshold so far trusted the settled value.</summary>
+        public bool Right { get; private set; }
+
+        /// <summary>Records the claim a threshold makes on the best value, if its score reaches it.</summary>
+        public void Claim((double Score, string Value)? best, double? threshold)
+        {
+            if (best is not { } b || !(b.Score >= threshold))
+            {
+                return;
+            }
+
+            if (b.Value == Settled)
+            {
+                Right = true;
+            }
+            else
+            {
+                _wrong.Add(b.Value);
+            }
+        }
+
+        /// <summary>Whether a wrong claim is still led to with <paramref name="length"/> characters of the settled value typed.</summary>
+        public bool Holds(int length) => _wrong.Any(v => FieldMemory.Begins(v, Settled[..length]));
+    }
 
     /// <summary>
     /// Replays the documents in the order they were settled, asking each memory about each document before putting it in
