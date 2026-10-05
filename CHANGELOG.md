@@ -5,6 +5,14 @@ with what to do.
 
 ## Unreleased
 
+### Added
+
+- **Korean typed text matches the syllable still being composed.** Hangul is typed a letter at a time, so the text at
+  a pause may end in a syllable on its way to another — "바" or "ㅂ" on the way to "박물관", "박" on the way to "바가지",
+  "오" to "와". Typed text with Hangul now begins a value when its keystrokes begin the value's (compound vowels and
+  finals as two keystrokes, doubled consonants as one). Thresholds still count characters typed. Text without Hangul is
+  compared as before.
+
 ### Changed
 
 - **A value trusted while a person types stays trusted as they type on.** Typed text only narrows the values, so a

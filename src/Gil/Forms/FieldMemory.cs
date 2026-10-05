@@ -230,9 +230,17 @@ public sealed class FieldMemory
         return false;
     }
 
-    /// <summary>Whether <paramref name="value"/> begins with the text typed so far (ignoring case); always when none is.</summary>
+    /// <summary>
+    /// Whether <paramref name="value"/> begins with the text typed so far (ignoring case); always when none is. Korean is
+    /// typed a letter at a time and the last syllable may still be composing — "ㅂ", then "바", then "박" on the way to
+    /// "박물관", and "박" may yet become "바가" — so text with Hangul begins a value when its keystrokes begin the
+    /// value's (<see cref="Hangul.Keystrokes"/>). Thresholds still count the characters typed: a syllable being
+    /// composed is one.
+    /// </summary>
     internal static bool Begins(string value, string? typed) =>
-        typed is null || value.StartsWith(typed, StringComparison.OrdinalIgnoreCase);
+        typed is null
+        || value.StartsWith(typed, StringComparison.OrdinalIgnoreCase)
+        || (Hangul.Has(typed) && Hangul.Keystrokes(value).StartsWith(Hangul.Keystrokes(typed), StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Every value of a field that takes several settled under the known keys, with the score each is compared with
