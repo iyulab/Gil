@@ -449,7 +449,9 @@ there: choose them with `SelectTypedKeyThresholds`, after `KeyThreshold`, which 
 start and chooses each length's threshold on the documents typed that far. Pass the form as it serves suggestions — the
 field's `DependsOn` and `KeyThreshold` set — since the replay asks the key layer as a suggestion would and leaves to the
 typed thresholds the documents that `KeyThreshold` did not answer rightly; choose `DependsOn` first, then
-`KeyThreshold`, then these:
+`KeyThreshold`, then these. For a field typed into, choose `DependsOn` with `typedLongest` too: the fields that decide
+a field before typing can blur it once a prefix has narrowed its values, and the choice then counts answers while
+typing as well and brings the typed thresholds for it (`Typed`):
 
 ```csharp
 var typedTeam = form.Field("team") with { TypedKeyThresholds = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30).Thresholds };

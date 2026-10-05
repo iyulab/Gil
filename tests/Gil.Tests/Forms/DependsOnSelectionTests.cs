@@ -143,4 +143,35 @@ public sealed class DependsOnSelectionTests
 
         act.Should().Throw<ArgumentException>();
     }
+
+    [Fact]
+    public void Counting_typing_brings_the_typed_thresholds_for_the_choice()
+    {
+        var documents = Reports(1500);
+
+        var untyped = ThresholdSelection.SelectDependsOn(() => new FieldMemory(), Report(), "code", documents, 0.8, 30);
+        var typed = ThresholdSelection.SelectDependsOn(() => new FieldMemory(), Report(), "code", documents, 0.8, 30, typedLongest: 2);
+
+        untyped.Typed.Should().BeNull();
+        untyped.Trials.Should().OnlyContain(t => t.Typed == null);
+        typed.Typed.Should().NotBeNull();
+        typed.Trials.Should().OnlyContain(t => t.Typed != null && t.Typed.ByLength.Count == 2);
+
+        // The typed thresholds that come with the choice are those chosen on the form resting on it, with its key threshold.
+        var resting = Report(typed.DependsOn);
+        resting = new FormDefinition(resting.Name, [.. resting.Fields.Select(f => f.Name == "code" ? f with { KeyThreshold = typed.Chosen.Chosen?.Threshold } : f)], resting.Language);
+        var again = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), resting, "code", documents, 0.8, 30, 2);
+        typed.Typed!.Thresholds.Should().Equal(again.Thresholds);
+    }
+
+    [Fact]
+    public void Typing_is_not_counted_for_a_field_that_takes_several_values()
+    {
+        var form = new FormDefinition("paper",
+            [new FieldDefinition("venue", FieldRole.Observed), new FieldDefinition("topics", FieldRole.Judged) { Multiple = true }], PromptLanguage.English);
+
+        var select = () => ThresholdSelection.SelectDependsOn(() => new FieldMemory(), form, "topics", [], 0.8, 5, typedLongest: 1);
+
+        select.Should().Throw<ArgumentException>().WithMessage("*'topics' takes several values*");
+    }
 }

@@ -3,6 +3,15 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Added
+
+- **`SelectDependsOn` can count typing.** The fields that decide a field before typing can blur it once a person has
+  typed a prefix, so a set chosen by answers before typing alone can cost answers while typing. Give `typedLongest`
+  and each set is counted by its answers before and while typing together; the typed thresholds for the choice come
+  with it (`DependsOnChoice.Typed`, and `DependsOnTrial.Typed` for each set tried). Without it the choice is as before.
+
 ## 0.14.0
 
 ### Added
