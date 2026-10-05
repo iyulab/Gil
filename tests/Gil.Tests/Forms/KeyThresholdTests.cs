@@ -184,6 +184,7 @@ public sealed class KeyThresholdTests
         // right as well. The rest come from a catch-all component whose team varies; their texts are just as similar to
         // each other, but the nearest one's team is right about one time in five. Chosen on every lookup, a similarity
         // threshold rides on the first kind — which the key already answers — and then answers the second kind wrongly.
+        // That is a layer the nearest document decides alone; with its neighbours voting, as by default, it would not.
         var random = new Random(5);
         string[] components = ["vpn", "printer", "badge", "laptop", "mail"];
         string[] teams = ["network", "facilities", "security", "hardware", "accounts"];
@@ -192,7 +193,7 @@ public sealed class KeyThresholdTests
             [
                 new FieldDefinition("component", FieldRole.Observed),
                 new FieldDefinition("summary", FieldRole.Observed),
-                new FieldDefinition("team", FieldRole.Judged),
+                new FieldDefinition("team", FieldRole.Judged) { SimilarDocumentVotes = 1 },
             ],
             PromptLanguage.English);
         SettledDocument Request(int i)
@@ -246,6 +247,12 @@ public sealed class KeyThresholdTests
         before.Answered.Should().BeGreaterThan(10);
         ((double)before.Right / before.Answered).Should().BeLessThan(0.5); // the promise was 0.8
         (await SimilarAnswers(layered.Key.Chosen?.Threshold, layered.Memory.Chosen?.Threshold)).Answered.Should().Be(0);
+
+        // Ten neighbours of a catch-all request disagree, so their vote is not trusted even on a threshold chosen on every lookup.
+        form = new FormDefinition("ticket", [.. form.Fields.Select(f => f with { SimilarDocumentVotes = 10 })], form.Language);
+        var voted = (await ThresholdSelection.SelectAsync(new LexicalMemory(), form, "team", history, 0.8, 10, Ct)).Chosen;
+        voted.Should().NotBeNull();
+        (await SimilarAnswers(separate.Key?.Threshold, voted!.Threshold)).Answered.Should().BeLessThan(before.Answered / 5);
     }
 
     [Fact]

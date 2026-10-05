@@ -304,18 +304,18 @@ var document = session.Snapshot();
 Each field is tried in a fixed order, and `FieldSuggestion.Source` says which layer the first candidate came from:
 1. Values settled alongside the values the document already has, when the keys backing them score high enough
    (`KeyThreshold`).
-2. The value of a similar settled document, when the field sets `MemoryThreshold`, a document memory is given, and the
-   document is similar enough.
+2. The value the most similar settled documents vote for, when the field sets `MemoryThreshold`, a document memory is
+   given, and the vote is decided enough.
 3. A model, when one is given (`IFieldModel`; `ResolverFieldModel` puts the resolver above behind it, one task per
    field). It is asked only when neither memory had anything, so it never overrides a value the document supports.
 
 A layer answers only at or above its threshold. What falls short is still offered, after the layers that answered, as
-a guess: values under a key below `KeyThreshold`, then the value settled most often for the field, then the nearest
-document below `MemoryThreshold`, then the field's other values by how often they were settled. Replaying public
-streams of settled documents ranked them so: the nearest document below its threshold was right less often than a
-weaker key or the most frequent value, but far more often than the next most frequent ones. A field without
-`MemoryThreshold` makes no promise from similar documents, but with a document memory the nearest one is still looked
-up and offered in the same place. `FieldCandidate.Trusted` marks which is which, and `FieldSuggestion.Answered` says whether
+a guess: values under a key below `KeyThreshold`, then the value settled most often for the field, then the value
+similar documents vote for below `MemoryThreshold`, then the field's other values by how often they were settled.
+Replaying public streams of settled documents ranked them so: the nearest document below its threshold was right less
+often than a weaker key or the most frequent value, but far more often than the next most frequent ones. A field without
+`MemoryThreshold` makes no promise from similar documents, but with a document memory they still vote and the value is
+offered in the same place. `FieldCandidate.Trusted` marks which is which, and `FieldSuggestion.Answered` says whether
 the first candidate is an answer at all. When it is not, leave the field to the person: do not fill a guess in, and do
 not mark it as the suggestion. Listing guesses as unmarked choices the person may pick is another matter. Replaying a
 public stream of settled documents, showing the first guess that way saved about a third of the typing, even after
@@ -328,9 +328,19 @@ compared with `KeyThreshold`. Replaying a public stream of settled documents wit
 precision. A choice among a handful of values that every document has rarely decides another field, and without
 `KeyThreshold` its values are guesses, so it never outranks a similar document that meets its threshold.
 
+The similar document layer lets the nearest `SimilarDocumentVotes` documents vote — ten by default. Each votes for its
+settled value with its similarity; the value with the most weight is the candidate, and its score is the vote's margin:
+the winner's weight less the runner-up's, over all the weight cast, from 0 for a tie to 1 when every voter agrees. That
+score is what `MemoryThreshold` is compared with, so a near document that its neighbours contradict is no longer trusted
+on its similarity alone. Only documents whose value lies in the field's domain vote. Replaying public streams of settled
+documents with thresholds chosen for a precision of 0.8, ten voters answered 1.8 times as many documents right as the
+nearest document alone in one stream and 1.2 times in another, at a higher precision (0.89 and 0.91 against 0.83 and
+0.86). `SimilarDocumentVotes = 1` lets the nearest document decide alone on its similarity, as before 0.16.0; so does a
+memory that ranks only its nearest document. Choose `MemoryThreshold` again after changing it.
+
 To show what a similar document's candidate rests on, create the resolver with `similarDocumentCount`: each suggestion
-then carries `SimilarDocuments`, the most similar settled documents with their similarity and settled value, the
-candidate's own document first. They come from the same lookup, so a person sees the evidence the suggestion was made
+then carries `SimilarDocuments`, the most similar settled documents with their similarity and settled value; the
+candidate's own document is the nearest of them with its value. They come from the same lookup, so a person sees the evidence the suggestion was made
 from — and whether the neighbours agree — at no extra cost. A document being edited is never among them: the saved
 version of it is passed over for the next most similar document.
 
@@ -413,7 +423,8 @@ the same ids, it answered as if no copy had arrived.
 The two layers answer different kinds of documents. The key layer answers where a value the document already has
 decides the field. The similar document layer answers the rest, which are harder. A form whose judged fields rest only
 on observed fields (`DependsOn` naming observed fields alone) gets most of its answers from similar documents. In a
-replay of a public stream of settled documents, that layer's answers were right about seven times in ten at most, even
+replay of a public stream of settled documents with the nearest document deciding alone, that layer's answers were
+right about seven times in ten at most, even
 among the most similar documents: documents whose observed values read almost the same had different settled values.
 Thresholds chosen there for a target of 0.8 delivered 0.66 to 0.72 on the documents that followed. Where settled
 documents come in batches that share their observed values, expect the similar document layer to fall short of a high

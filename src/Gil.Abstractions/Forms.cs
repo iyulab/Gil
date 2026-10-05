@@ -82,12 +82,27 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     public FieldPolicy Policy { get; init; } = FieldPolicy.Suggest;
 
     /// <summary>
-    /// Similarity at or above which a similar settled document's value is suggested. There is no default, for the same
-    /// reason as <see cref="TaskPolicy.MemoryThreshold"/>: the scale belongs to the memory in use. Null makes no promise:
-    /// with a document memory the layer still looks, reports <see cref="FieldSuggestion.SimilarDocuments"/>, and offers
-    /// the nearest document's value as a guess, as it does below a threshold.
+    /// Score at or above which the value the similar settled documents vote for is suggested — the score of
+    /// <see cref="SimilarDocumentVotes"/>: the vote's margin, or with a single voter the nearest document's similarity.
+    /// There is no default, for the same reason as <see cref="TaskPolicy.MemoryThreshold"/>: the scale belongs to the
+    /// memory in use and to the vote. A threshold chosen before 0.16.0 measured the nearest document's similarity and must
+    /// be chosen again (<c>ThresholdSelection.SelectAsync</c>, <c>SelectLayersAsync</c>). Null makes no promise: with a
+    /// document memory the layer still looks, reports <see cref="FieldSuggestion.SimilarDocuments"/>, and offers the
+    /// value voted for as a guess, as it does below a threshold.
     /// </summary>
     public double? MemoryThreshold { get; init; }
+
+    /// <summary>
+    /// How many of the most similar settled documents vote on the similar document layer's value. Each votes for its value
+    /// with its similarity; the value with the most weight is the layer's candidate, its evidence the nearest document that
+    /// voted for it. Its score is the vote's margin — the winner's weight less the runner-up's, over all the weight cast —
+    /// from 0 (a tie) to 1 (every voter agrees), so a lone near document that its neighbours contradict is not trusted on
+    /// its similarity alone. Only documents whose value lies in the field's domain vote. With 1 — or a memory that ranks
+    /// only its nearest document — the nearest such document decides alone and the score is its similarity. Ten by default: in replays of settled documents across four forms,
+    /// ten voters answered more often than the nearest document alone at a higher realized precision. Choose
+    /// <see cref="MemoryThreshold"/> again after changing it. At least 1.
+    /// </summary>
+    public int SimilarDocumentVotes { get; init; } = 10;
 
     /// <summary>
     /// Score at or above which values settled alongside the document's known values are suggested as backed by them.
@@ -165,7 +180,8 @@ public sealed record FormDefinition
     /// <param name="language">The wording model calls for this form are made in.</param>
     /// <exception cref="ArgumentException">
     /// A duplicate field name, no judged field, an observed field marked <see cref="FieldDefinition.Multiple"/> or such a
-    /// field with a <see cref="FieldDefinition.MemoryThreshold"/> or <see cref="FieldDefinition.TypedKeyThresholds"/>, or a
+    /// field with a <see cref="FieldDefinition.MemoryThreshold"/> or <see cref="FieldDefinition.TypedKeyThresholds"/>, a
+    /// <see cref="FieldDefinition.SimilarDocumentVotes"/> below 1, or a
     /// <see cref="FieldDefinition.DependsOn"/> that names an unknown field, the field itself, or a field that is not evidence,
     /// or a <see cref="FieldDefinition.CandidatesFrom"/> that names an unknown field or the field itself.
     /// </exception>
@@ -199,6 +215,11 @@ public sealed record FormDefinition
         if (fields.FirstOrDefault(f => f.Multiple && f.MemoryThreshold is not null) is { } rememberedSet)
         {
             throw new ArgumentException($"Field '{rememberedSet.Name}' takes several values; the similar document layer does not suggest it, so it takes no memory threshold.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.SimilarDocumentVotes < 1) is { } voteless)
+        {
+            throw new ArgumentException($"Field '{voteless.Name}' gives {voteless.SimilarDocumentVotes} similar documents a vote; at least one must.", nameof(fields));
         }
 
         if (fields.FirstOrDefault(f => f.Multiple && f.TypedKeyThresholds is not null) is { } typedSet)
@@ -334,8 +355,8 @@ public enum FieldSource
 /// <param name="Trusted">
 /// Whether the layer answered: its threshold was met (<see cref="FieldDefinition.KeyThreshold"/>,
 /// <see cref="FieldDefinition.MemoryThreshold"/>) or it is a model's choice. False marks a guess — values under a key too
-/// weak to decide, the field's most frequent value, the nearest document below the similarity threshold (or with none
-/// set), the field's other values, in that order — which an application may still list but should not present as a
+/// weak to decide, the field's most frequent value, the value similar documents vote for below the threshold (or with
+/// none set), the field's other values, in that order — which an application may still list but should not present as a
 /// suggestion.
 /// </param>
 public sealed record FieldCandidate(string Value, double Score, FieldSource Source, string? Evidence, bool Trusted = true);
@@ -366,11 +387,11 @@ public sealed record FieldSuggestion(
     public bool Answered => Candidates.Count > 0 && Candidates[0].Trusted;
 
     /// <summary>
-    /// The settled documents most similar to this one, most similar first — the evidence behind the candidate from a
-    /// similar document, so a person can see what it rests on and whether its neighbours agree. The first is that
-    /// candidate's document. Empty unless the resolver was asked for them and has a document memory that found a document
-    /// — whether or not the field sets <see cref="FieldDefinition.MemoryThreshold"/>; the document itself is never
-    /// among them. Memory keeps one document per case, so each is a different case.
+    /// The settled documents most similar to this one, most similar first — the evidence behind the candidate from similar
+    /// documents, so a person can see what it rests on and whether its neighbours agree. That candidate's own document
+    /// (<see cref="FieldCandidate.Evidence"/>) is the nearest of them with its value, when it is among them. Empty unless the resolver was asked for them and has a document memory that found a document
+    /// — whether or not the field sets <see cref="FieldDefinition.MemoryThreshold"/>; the document itself, and documents
+    /// whose value lies outside the field's domain, are never among them. Memory keeps one document per case, so each is a different case.
     /// </summary>
     public IReadOnlyList<MemoryMatch> SimilarDocuments { get; init; } = [];
 }

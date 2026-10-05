@@ -318,12 +318,13 @@ public sealed class FormResolver
     }
 
     /// <summary>
-    /// The most similar settled document's value — trusted when similar enough, a guess when the field sets no threshold —
-    /// the documents behind it, and what the lookup found. The document itself is never its own evidence: one more is
-    /// asked for, and it is passed over. When the most similar document's value lies outside the field's domain the layer
-    /// offers nothing, rather than a less similar document's — the one rule a replay reproduces with any memory, since a
-    /// memory need rank only the nearest — and documents outside it are not reported. The domain is the document's: it is
-    /// narrowed by <paramref name="values"/> and <paramref name="sets"/> when the field takes its candidates from another.
+    /// The value the most similar settled documents vote for (<see cref="FieldDefinition.SimilarDocumentVotes"/>) — trusted
+    /// when its score reaches the threshold, a guess when the field sets none — the documents behind it, and what the lookup
+    /// found. The document itself is never its own evidence: one more is asked for, and it is passed over. Only documents
+    /// whose value lies in the field's domain vote or are reported, so with a memory that ranks only its nearest document,
+    /// a nearest document outside the domain leaves the layer with nothing — as a replay finds with the same memory. The
+    /// domain is the document's: it is narrowed by <paramref name="values"/> and <paramref name="sets"/> when the field
+    /// takes its candidates from another.
     /// </summary>
     private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
         FieldDefinition field,
@@ -345,19 +346,25 @@ public sealed class FormResolver
 
         try
         {
-            var (found, energy) = await memory.NearestAsync(task, evidence, Math.Max(SimilarDocumentCount, 1) + 1, traceId, cancellationToken).ConfigureAwait(false);
+            var asked = Math.Max(SimilarDocumentCount, field.SimilarDocumentVotes) + 1;
+            var (found, energy) = await memory.NearestAsync(task, evidence, asked, traceId, cancellationToken).ConfigureAwait(false);
             var others = found.Where(m => m.Source != documentId).ToList();
             if (others.Count == 0)
             {
                 return ([], [], null, energy);
             }
 
-            var match = others[0];
-            var admitted = field.Admits(match.Answer, values, sets) && FieldMemory.Begins(match.Answer, typed);
-            var hit = admitted && typed is null && match.Similarity >= threshold; // typed text: only the key layer answers
-            var recall = new Recall(match.Source, match.Similarity, threshold, hit);
-            var neighbours = others.Where(m => field.Admits(m.Answer, values, sets) && FieldMemory.Begins(m.Answer, typed)).Take(SimilarDocumentCount).ToList();
-            return (admitted ? [new FieldCandidate(match.Answer, match.Similarity, FieldSource.SimilarDocument, match.Source, hit)] : [], neighbours, recall, energy);
+            var admitted = others.Where(m => field.Admits(m.Answer, values, sets) && FieldMemory.Begins(m.Answer, typed)).ToList();
+            var neighbours = admitted.Take(SimilarDocumentCount).ToList();
+            if (SimilarVote.Decide(admitted, field.SimilarDocumentVotes) is not ({ } match, var score))
+            {
+                // Every document found lies outside the domain: it reports what the nearest was, and offers nothing.
+                return ([], neighbours, new Recall(others[0].Source, others[0].Similarity, threshold, false), energy);
+            }
+
+            var hit = typed is null && score >= threshold; // typed text: only the key layer answers
+            var recall = new Recall(match.Source, score, threshold, hit);
+            return ([new FieldCandidate(match.Answer, score, FieldSource.SimilarDocument, match.Source, hit)], neighbours, recall, energy);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

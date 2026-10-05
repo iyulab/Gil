@@ -61,8 +61,10 @@ public sealed class FieldDomainTests
 
         var suggestion = (await resolver.SuggestAsync(form, "d5", Asked(outside), Ct)).Single();
 
+        // The nearest document does not vote: the documents in the list do, and the most similar of them lends its value.
         suggestion.Candidates.Select(c => c.Value).Should().NotContain("other-not-in-list").And.OnlyContain(v => Categories.Contains(v));
-        suggestion.Candidates.Should().NotContain(c => c.Source == FieldSource.SimilarDocument);
+        suggestion.Candidates.Should().ContainSingle(c => c.Source == FieldSource.SimilarDocument)
+            .Which.Should().Match<FieldCandidate>(c => c.Value == "crisis" && c.Evidence == "d3");
         suggestion.SimilarDocuments.Should().NotBeEmpty().And.NotContain(m => m.Source == "d4");
     }
 
@@ -102,11 +104,12 @@ public sealed class FieldDomainTests
     [Fact]
     public async Task A_replay_finds_a_similar_document_exactly_where_a_suggestion_offers_one()
     {
-        // Each document is asked about with the ones before it remembered, as a replay does; where the nearest is settled
-        // outside the list, neither offers the layer's value.
-        var form = Intake();
+        // Each document is asked about with the ones before it remembered, as a replay does; where every document found is
+        // settled outside the list — only the first, for the second document — neither offers the layer's value. A threshold
+        // of 0 trusts every candidate the layer has, so none hides behind another layer's guess with the same value.
+        var form = Intake(memoryThreshold: 0);
         string[] notes = ["feels unsafe at home", "feels unsafe at home tonight", "feels unsafe at home tonight too", "asks about opening hours", "asks about opening hours today", "asks about opening hours today too"];
-        string[] values = ["crisis", "other-not-in-list", "crisis", "counsel", "retired", "counsel"];
+        string[] values = ["other-not-in-list", "crisis", "crisis", "counsel", "retired", "counsel"];
         var documents = notes.Select((note, i) => Doc(i + 1, "phone", note, values[i])).ToList();
 
         var offered = 0;
@@ -122,7 +125,7 @@ public sealed class FieldDomainTests
 
         replay.Lookups.Should().Be(documents.Count - 1);
         replay.Candidates.Should().Be(offered);
-        offered.Should().Be(replay.Lookups - 2); // the documents nearest to d2 and to d5 find nothing
+        offered.Should().Be(replay.Lookups - 1); // d2 finds only d1, outside the list
     }
 
     private sealed class FixedModel(params string[] values) : IFieldModel

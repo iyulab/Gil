@@ -3,6 +3,23 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## Unreleased
+
+### Breaking
+
+- **The similar document layer votes.** The nearest `FieldDefinition.SimilarDocumentVotes` settled documents — ten by
+  default — vote for their values, each with its similarity; the value with the most weight is the candidate, its
+  evidence the nearest document that voted for it, and its score the vote's margin (the winner's weight less the
+  runner-up's, over all the weight cast). The score was the nearest document's similarity. `MemoryThreshold`,
+  `FieldCandidate.Score` and the trace's `Recall.Similarity` for that layer now carry the margin, so **choose
+  `MemoryThreshold` again** (`ThresholdSelection.SelectAsync` or `SelectLayersAsync`, which replay the same vote).
+  Replaying public streams with thresholds chosen for 0.8, the vote answered 1.8 and 1.2 times as many documents right
+  at a higher precision. Set `SimilarDocumentVotes = 1` to keep the nearest document deciding alone.
+- **Documents outside a field's domain do not vote.** The layer used to offer nothing when the nearest document's value
+  lay outside `Candidates` or `CandidatesFrom`; the documents inside it now vote — with `SimilarDocumentVotes = 1`, the
+  nearest of them decides. A memory that ranks only its nearest document (the default `IMemory.NearestAsync`) still
+  offers nothing then.
+
 ## 0.15.0
 
 ### Added

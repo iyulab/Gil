@@ -131,7 +131,7 @@ public sealed class DocumentDomainTests
     }
 
     [Fact]
-    public async Task A_similar_document_whose_value_lies_outside_the_documents_domain_offers_nothing()
+    public async Task A_similar_document_whose_value_lies_outside_the_documents_domain_does_not_vote()
     {
         var form = Paper(mainKeyThreshold: null, mainMemoryThreshold: 0.3);
         var resolver = new FormResolver(new FieldMemory(), new LexicalMemory(), similarDocumentCount: 5);
@@ -146,7 +146,9 @@ public sealed class DocumentDomainTests
         var narrowed = (await resolver.SuggestAsync(form, "d9", asked, Topics("vision"), Ct)).Single(s => s.Field == "main");
 
         open.Candidates.Should().Contain(c => c.Source == FieldSource.SimilarDocument && c.Value == "nlp" && c.Trusted);
-        narrowed.Candidates.Should().NotContain(c => c.Source == FieldSource.SimilarDocument);
+        // Narrowed to vision, d1 does not vote; d2 alone does, on its own similarity.
+        narrowed.Candidates.Should().NotContain(c => c.Value == "nlp");
+        narrowed.Candidates.Should().ContainSingle(c => c.Source == FieldSource.SimilarDocument).Which.Evidence.Should().Be("d2");
         narrowed.SimilarDocuments.Should().NotContain(m => m.Source == "d1");
     }
 

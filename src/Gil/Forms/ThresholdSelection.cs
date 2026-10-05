@@ -1,6 +1,6 @@
 namespace Gil.Forms;
 
-/// <summary>A similarity threshold chosen for a field's document memory, and how it did on the replay it was chosen on.</summary>
+/// <summary>A threshold chosen for one memory layer of a field, and how it did on the replay it was chosen on.</summary>
 /// <param name="Threshold">The lowest score down to which every band of answers met the target precision.</param>
 /// <param name="Precision">The share of answers at or above the threshold that matched the settled value.</param>
 /// <param name="AnswerRate">The share of lookups answered at or above the threshold.</param>
@@ -81,9 +81,10 @@ public static class ThresholdSelection
     /// <summary>
     /// Replays the documents in the order they were settled: each is looked up in a memory holding only the documents
     /// settled before it, by the evidence lines its last suggestion was made from — the values that had arrived before
-    /// the field (<see cref="SettledDocument.Arrival"/>) — and then remembered with all its values, replacing an earlier
+    /// the field (<see cref="SettledDocument.Arrival"/>), its nearest documents voting as a suggestion's do
+    /// (<see cref="FieldDefinition.SimilarDocumentVotes"/>) — and then remembered with all its values, replacing an earlier
     /// document of the same case, as the form resolver does. Chooses the lowest threshold down to which every band of answers
-    /// reaches <paramref name="targetPrecision"/> — precision fitted as a non-decreasing function of similarity, so a weak
+    /// reaches <paramref name="targetPrecision"/> — precision fitted as a non-decreasing function of the layer's score, so a weak
     /// band is not admitted on the strength of good answers above it — with at least <paramref name="minimumAnswered"/>
     /// answers in all. When no threshold does, <see cref="ThresholdReplay.Chosen"/> is null and memory should not answer
     /// this field on its own; <see cref="ThresholdReplay.MostPrecise"/> still says how close it came. On its own this
@@ -563,9 +564,10 @@ public static class ThresholdSelection
             if (remembered > 0)
             {
                 var asked = FormResolver.Evidence(form, field, before, beforeSets);
-                var (found, _) = await memory.LookupAsync(task, asked, traceId, cancellationToken).ConfigureAwait(false);
-                // As a suggestion does, a nearest document whose value lies outside the field's domain offers nothing.
-                match = found is null || !definition.Admits(found.Answer, before, beforeSets) ? null : (found.Similarity, found.Answer == settled);
+                var (found, _) = await memory.NearestAsync(task, asked, definition.SimilarDocumentVotes, traceId, cancellationToken).ConfigureAwait(false);
+                // As a suggestion does: only documents whose value lies in the field's domain vote, scored as it scores them.
+                var admitted = found.Where(m => definition.Admits(m.Answer, before, beforeSets)).ToList();
+                match = SimilarVote.Decide(admitted, definition.SimilarDocumentVotes) is ({ } winner, var score) ? (score, winner.Answer == settled) : null;
             }
 
             steps.Add(new Step(keyLooked, first, remembered > 0, match));
