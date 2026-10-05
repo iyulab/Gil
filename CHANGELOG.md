@@ -3,7 +3,7 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
-## Unreleased
+## 0.14.0
 
 ### Added
 
