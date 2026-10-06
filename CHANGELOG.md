@@ -3,6 +3,18 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## 0.18.0
+
+### Added
+
+- **A coarse level for values that name their class in their leading characters.** Set `FieldDefinition.Coarse` to a
+  `CoarseLevel(prefix)` and, when no layer answers the value, `FieldSuggestion.Coarse` offers the class: the prefix the
+  values under the document's keys back by their summed scores, else the one the similar documents vote for — trusted
+  at the level's `KeyThreshold`, or `MemoryThreshold` with its `MemorySimilarityFloor`, a guess otherwise. Choose them
+  with `ThresholdSelection.SelectCoarseAsync` after the field's own thresholds. `Candidates` still hold settled values
+  only. Replaying public streams, the class was trusted for 42% and 10% of the values left unanswered, right 97% and 85%
+  of the time.
+
 ## 0.17.0
 
 ### Fixed

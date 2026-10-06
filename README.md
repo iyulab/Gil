@@ -409,6 +409,18 @@ var team = form.Field("team") with
 };
 ```
 
+Where a field's values name their class in their leading characters — the chapter of a fault code, the class of a
+patent classification, the group of a product code — a value the layers cannot answer can often still be given its
+class. Set `FieldDefinition.Coarse` to a `CoarseLevel` with the prefix length, and when no layer answers the value
+`FieldSuggestion.Coarse` offers a prefix: the one the values under the document's keys back by their summed scores,
+else the one the similar documents vote for. It is trusted at the level's own thresholds, chosen after the field's with
+`ThresholdSelection.SelectCoarseAsync` on the lookups the value layers leave, and is a guess otherwise. It never enters
+`Candidates`, which hold settled values only. The class is worth what follows from it — routing, a reviewer, a section
+of the form — more than typing: a right two-character chapter saves one keystroke of four. Replaying public streams with
+thresholds chosen on the first ten thousand documents, the chapter of an
+aircraft fault code was trusted for 42% of the reports whose code went unanswered at a target of 0.95, and was right
+for 97% of them; the class of a patent classification, for 10% of the patents unanswered at 0.8, right for 85%.
+
 A chosen threshold also holds only for the version of Gil that chose it. A threshold rests on how a layer scores its
 candidates and on what the replay asks, and a release may change either: 0.9.0 changed the key layer's scale, 0.10.0
 and 0.11.0 what the replay asks, 0.16.0 the similar document layer's scale, and 0.17.0 added its similarity floor. When you store a threshold, store the Gil version with it and choose again when that
