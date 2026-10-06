@@ -3,7 +3,7 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
-## 0.18.0
+## 0.17.0
 
 ### Added
 
@@ -14,8 +14,6 @@ with what to do.
   with `ThresholdSelection.SelectCoarseAsync` after the field's own thresholds. `Candidates` still hold settled values
   only. Replaying public streams, the class was trusted for 42% and 10% of the values left unanswered, right 97% and 85%
   of the time.
-
-## 0.17.0
 
 ### Fixed
 
