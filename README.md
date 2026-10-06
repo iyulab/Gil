@@ -479,6 +479,14 @@ hundred values: the key layer answered 1.9 times as often as with every field, a
 These were the two fields a learned weighting of the fields ranked highest, and resting on them answered 2.2 times as
 often on the documents that followed, at 0.95 against 0.89. It costs one replay per evidence field and one per addition.
 
+When another form has already settled the same subject — the same order, case or applicant — give its settled values
+to this form as observed fields. The key layer learns from the settled documents which of their values go with which
+of this field's, and the similar document layer reads them as evidence; the two forms' values need not map one to one.
+Replaying a public stream of patents classified under two schemes, with the class one scheme had settled given as an
+observed field of the other, the field was answered rightly 1.8 times as often on the documents that followed, at the
+same precision (0.86); the same values shuffled between documents answered no more often than without them. Only a
+value the other form has settled is evidence: one still open there may change.
+
 When a person starts typing into a judged field, ask again with what has been typed rather than dropping the
 suggestion. `SuggestAsync` takes, for each field being typed into, the text typed so far; the field stays open, and its
 suggestion offers only values that begin with the text (ignoring case; Korean by keystrokes, so a syllable still
