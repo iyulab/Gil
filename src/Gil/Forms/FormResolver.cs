@@ -268,7 +268,7 @@ public sealed class FormResolver
         var chosen = field.Multiple && sets.TryGetValue(field.Name, out var picked) ? new HashSet<string>(picked, StringComparer.Ordinal) : [];
         var remembered = FieldMemory.Rank(form, field.Name, values, CandidateCount, excluding: documentId, knownSets: sets, typed: typed);
         var keyed = remembered.Where(c => c.Evidence is not null).ToList();
-        var (similar, neighbours, recall, energy) = await SimilarAsync(field, documentId, task, lines, values, sets, typed, traceId, cancellationToken).ConfigureAwait(false);
+        var (similar, neighbours, admitted, recall, energy) = await SimilarAsync(field, documentId, task, lines, values, sets, typed, traceId, cancellationToken).ConfigureAwait(false);
 
         // A model only where neither memory had evidence: a value backed by what the document says — even by a key too
         // weak to answer — beats a model's guess. Not while a person is typing: they ask again with every pause.
@@ -297,6 +297,14 @@ public sealed class FormResolver
         var answered = candidates.Count > 0 && candidates[0].Trusted;
         var confidence = source == FieldSource.Model ? modelled?.Confidence : null;
 
+        // No layer answered the value: offer its class, as the same two layers back it. Not while a person is typing.
+        var coarse = field.Coarse is { } level && typed is null && !answered
+            ? CoarseGroups.Candidate(
+                level,
+                CoarseGroups.Keys(FieldMemory.KeyedValues(form, field.Name, values, documentId, sets), level),
+                CoarseGroups.Vote(admitted, field.SimilarDocumentVotes, level))
+            : null;
+
         // A model that resolved under this id through the same sink has closed the trace with its own outcome.
         if (Sink is ITelemetrySink sink && (modelled is null || sink.FindTrace(traceId) is null))
         {
@@ -314,6 +322,7 @@ public sealed class FormResolver
         return new FieldSuggestion(field.Name, candidates, source, field.Policy, confidence, Stopwatch.GetElapsedTime(started), energy, traceId)
         {
             SimilarDocuments = neighbours,
+            Coarse = coarse,
         };
     }
 
@@ -326,7 +335,7 @@ public sealed class FormResolver
     /// domain is the document's: it is narrowed by <paramref name="values"/> and <paramref name="sets"/> when the field
     /// takes its candidates from another.
     /// </summary>
-    private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, Recall? Recall, double Energy)> SimilarAsync(
+    private async Task<(IReadOnlyList<FieldCandidate> Candidates, IReadOnlyList<MemoryMatch> Neighbours, IReadOnlyList<MemoryMatch> Admitted, Recall? Recall, double Energy)> SimilarAsync(
         FieldDefinition field,
         string documentId,
         string task,
@@ -339,7 +348,7 @@ public sealed class FormResolver
     {
         if (DocumentMemory is not IMemory memory || evidence.Length == 0 || field.Multiple)
         {
-            return ([], [], null, 0); // a document memory holds one value per document: it has nothing for a set
+            return ([], [], [], null, 0); // a document memory holds one value per document: it has nothing for a set
         }
 
         var threshold = field.MemoryThreshold;
@@ -351,7 +360,7 @@ public sealed class FormResolver
             var others = found.Where(m => m.Source != documentId).ToList();
             if (others.Count == 0)
             {
-                return ([], [], null, energy);
+                return ([], [], [], null, energy);
             }
 
             var admitted = others.Where(m => field.Admits(m.Answer, values, sets) && FieldMemory.Begins(m.Answer, typed)).ToList();
@@ -359,7 +368,7 @@ public sealed class FormResolver
             if (SimilarVote.Decide(admitted, field.SimilarDocumentVotes) is not ({ } match, var score))
             {
                 // Every document found lies outside the domain: it reports what the nearest was, and offers nothing.
-                return ([], neighbours, new Recall(others[0].Source, others[0].Similarity, threshold, false), energy);
+                return ([], neighbours, admitted, new Recall(others[0].Source, others[0].Similarity, threshold, false), energy);
             }
 
             // Typed text: only the key layer answers. The floor keeps a vote among documents less like the draft than those the
@@ -367,11 +376,11 @@ public sealed class FormResolver
             var floored = field.MemorySimilarityFloor is { } floor && SimilarVote.Voters(admitted, field.SimilarDocumentVotes) > 1 && match.Similarity < floor;
             var hit = typed is null && score >= threshold && !floored;
             var recall = new Recall(match.Source, score, threshold, hit);
-            return ([new FieldCandidate(match.Answer, score, FieldSource.SimilarDocument, match.Source, hit)], neighbours, recall, energy);
+            return ([new FieldCandidate(match.Answer, score, FieldSource.SimilarDocument, match.Source, hit)], neighbours, admitted, recall, energy);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            return ([], [], Recall.Failed(threshold, error), 0);
+            return ([], [], [], Recall.Failed(threshold, error), 0);
         }
     }
 

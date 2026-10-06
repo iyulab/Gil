@@ -167,6 +167,21 @@ public sealed class FieldMemory
     }
 
     /// <summary>
+    /// Every value settled under the known keys with its score and the key that backs it most strongly, best first, as
+    /// <see cref="Rank"/> ranks them before taking its count — what a field's coarse level adds up by prefix.
+    /// </summary>
+    internal IReadOnlyList<(string Value, double Score, string? Evidence)> KeyedValues(
+        FormDefinition form, string field, IReadOnlyDictionary<string, string> known, string? excluding = null, IReadOnlyDictionary<string, IReadOnlyList<string>>? knownSets = null)
+    {
+        if (!_forms.TryGetValue(form.Name, out var index))
+        {
+            return [];
+        }
+
+        return [.. Keyed(index, form, form.Field(field), known, knownSets ?? NoSets, excluding).Select(s => (s.Value, s.Score, (string?)$"{s.Key.Field}: {s.Key.Value}"))];
+    }
+
+    /// <summary>
     /// The score of the best-ranked value settled under the known keys and whether it is <paramref name="value"/> — what
     /// <see cref="FieldDefinition.KeyThreshold"/> is compared with; null when no known key was seen.
     /// </summary>

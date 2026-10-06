@@ -182,6 +182,53 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     /// <see cref="MemoryThreshold"/>.
     /// </summary>
     public bool Multiple { get; init; }
+
+    /// <summary>
+    /// A coarser level of the field's values to offer when neither memory layer answers the value itself — for values
+    /// whose leading characters name a broader class, as a chapter of a fault code, a class of a patent classification or a
+    /// group of a product code. Null offers none. See <see cref="CoarseLevel"/>. Not for a field that takes several values.
+    /// </summary>
+    public CoarseLevel? Coarse { get; init; }
+}
+
+/// <summary>
+/// The coarse level of a judged field (<see cref="FieldDefinition.Coarse"/>): the first <see cref="Prefix"/> characters of
+/// its values. When neither memory layer answers a value, the same two layers are asked for the level instead — the
+/// scores of the values under the document's keys added up by their prefix, then the similarities of the documents voting
+/// added up by theirs — and the prefix they back is offered as <see cref="FieldSuggestion.Coarse"/>. A person who cannot
+/// be given the value can often be given its class, which is enough for what follows from the class (routing, a
+/// reviewer, a form section) and narrows what is left to type. The hierarchy is the values' own: a field whose classes are
+/// not prefixes of its values maps them in the application. Choose the thresholds with
+/// <c>ThresholdSelection.SelectCoarseAsync</c>, after the field's own.
+/// </summary>
+/// <param name="Prefix">How many leading characters of a value name its class; at least 1.</param>
+public sealed record CoarseLevel(int Prefix)
+{
+    /// <summary>
+    /// Score at or above which the prefix the document's keys back is trusted: the summed key scores of the values that
+    /// share it, on the key layer's scale. Null makes no promise from the keys.
+    /// </summary>
+    public double? KeyThreshold { get; init; }
+
+    /// <summary>
+    /// Score at or above which the prefix the similar documents vote for is trusted, where the keys' prefix is not: the
+    /// vote's margin over prefixes, on the scale of <see cref="FieldDefinition.MemoryThreshold"/>. Null makes no promise.
+    /// </summary>
+    public double? MemoryThreshold { get; init; }
+
+    /// <summary>
+    /// The similarity the nearest document voting for the prefix must also reach, as
+    /// <see cref="FieldDefinition.MemorySimilarityFloor"/> is for the value — set with <see cref="MemoryThreshold"/> from the
+    /// same choice.
+    /// </summary>
+    public double? MemorySimilarityFloor { get; init; }
+
+    /// <summary>The class of <paramref name="value"/>: its first <see cref="Prefix"/> characters, or all of it when shorter.</summary>
+    public string Of(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return value.Length <= Prefix ? value : value[..Prefix];
+    }
 }
 
 /// <summary>A form: the fields a document of it has, and the language a model reads it in.</summary>
@@ -232,6 +279,16 @@ public sealed record FormDefinition
         if (fields.FirstOrDefault(f => f.SimilarDocumentVotes < 1) is { } voteless)
         {
             throw new ArgumentException($"Field '{voteless.Name}' gives {voteless.SimilarDocumentVotes} similar documents a vote; at least one must.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.Coarse is { Prefix: < 1 }) is { } prefixless)
+        {
+            throw new ArgumentException($"Field '{prefixless.Name}' gives its coarse level a prefix of {prefixless.Coarse!.Prefix} characters; at least one.", nameof(fields));
+        }
+
+        if (fields.FirstOrDefault(f => f.Coarse is not null && (f.Multiple || f.Role != FieldRole.Judged)) is { } coarseField)
+        {
+            throw new ArgumentException($"Field '{coarseField.Name}' takes a coarse level, which only a judged field with a single value has.", nameof(fields));
         }
 
         if (fields.FirstOrDefault(f => f.Multiple && f.TypedKeyThresholds is not null) is { } typedSet)
@@ -406,6 +463,15 @@ public sealed record FieldSuggestion(
     /// whose value lies outside the field's domain, are never among them. Memory keeps one document per case, so each is a different case.
     /// </summary>
     public IReadOnlyList<MemoryMatch> SimilarDocuments { get; init; } = [];
+
+    /// <summary>
+    /// When the field has a coarse level (<see cref="FieldDefinition.Coarse"/>) and no layer answered its value: the class
+    /// the memory layers back, as a candidate whose value is the prefix — trusted when its layer's coarse threshold is met,
+    /// otherwise a guess. Kept apart from <see cref="Candidates"/>, which hold settled values only. Null when a layer
+    /// answered the value, the field has no coarse level, text is being typed into it, or no settled document backs a
+    /// prefix.
+    /// </summary>
+    public FieldCandidate? Coarse { get; init; }
 }
 
 /// <summary>What a model suggested for one field.</summary>
