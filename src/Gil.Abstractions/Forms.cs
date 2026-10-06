@@ -93,6 +93,18 @@ public sealed record FieldDefinition(string Name, FieldRole Role)
     public double? MemoryThreshold { get; init; }
 
     /// <summary>
+    /// The similarity the nearest document voting for the similar document layer's value must also reach for the value to
+    /// be trusted — set it together with <see cref="MemoryThreshold"/>, from the same choice
+    /// (<c>ThresholdChoice.SimilarityFloor</c>). A threshold promises its precision for drafts like the ones the replay
+    /// answered; the vote's score measures how far the neighbours agree, not how closely they resemble the draft, so a draft
+    /// written in words no settled document uses can still find weak neighbours agreeing on a value. The floor is the lower
+    /// end of how similar the documents behind the replay's answers were: below it the promise was never measured and the
+    /// value stays a guess. Null sets no floor. A replay with a single voter leaves it null: the score is then the
+    /// similarity itself.
+    /// </summary>
+    public double? MemorySimilarityFloor { get; init; }
+
+    /// <summary>
     /// How many of the most similar settled documents vote on the similar document layer's value. Each votes for its value
     /// with its similarity; the value with the most weight is the layer's candidate, its evidence the nearest document that
     /// voted for it. Its score is the vote's margin — the winner's weight less the runner-up's, over all the weight cast —

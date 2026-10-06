@@ -305,7 +305,8 @@ Each field is tried in a fixed order, and `FieldSuggestion.Source` says which la
 1. Values settled alongside the values the document already has, when the keys backing them score high enough
    (`KeyThreshold`).
 2. The value the most similar settled documents vote for, when the field sets `MemoryThreshold`, a document memory is
-   given, and the vote is decided enough.
+   given, the vote is decided enough, and the documents voting for it are about as like the draft as those the
+   threshold was measured on (`MemorySimilarityFloor`).
 3. A model, when one is given (`IFieldModel`; `ResolverFieldModel` puts the resolver above behind it, one task per
    field). It is asked only when neither memory had anything, so it never overrides a value the document supports.
 
@@ -337,6 +338,18 @@ documents with thresholds chosen for a precision of 0.8, ten voters answered 1.8
 nearest document alone in one stream and 1.2 times in another, at a higher precision (0.89 and 0.91 against 0.83 and
 0.86). `SimilarDocumentVotes = 1` lets the nearest document decide alone on its similarity, as before 0.16.0; so does a
 memory that ranks only its nearest document. Choose `MemoryThreshold` again after changing it.
+
+The margin says how far the neighbours agree, not how closely they resemble the draft. A draft written in words no
+settled document uses still has nearest documents — ones that share only an opening phrase or another field — and they
+can agree. A threshold chosen by replaying documents written the usual way never saw such a draft, and when that replay
+was right every time it chooses a threshold low enough to let them through. So the replay also chooses a floor: of the
+answers at or above the threshold, the similarity of the nearest document voting for the answer that only a hundredth
+of them fell below. Set it as `MemorySimilarityFloor` with the threshold; below it the vote is offered as a guess. In a
+synthetic stream where every settled document used the same words for each topic, ten voters with the threshold alone
+answered about half of drafts reworded in other words wrongly, and none with the floor. Replaying public streams with
+drafts stripped of their free text or of its topic words, the floor cost under one percent of the answers to drafts written the
+usual way and answered no more of the stripped ones wrongly. With a single voter the threshold already is a
+similarity, and no floor is chosen.
 
 To show what a similar document's candidate rests on, create the resolver with `similarDocumentCount`: each suggestion
 then carries `SimilarDocuments`, the most similar settled documents with their similarity and settled value; the
@@ -388,12 +401,17 @@ falls short:
 
 ```csharp
 var layers = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
-var team = form.Field("team") with { KeyThreshold = layers.Key.Chosen?.Threshold, MemoryThreshold = layers.Memory.Chosen?.Threshold };
+var team = form.Field("team") with
+{
+    KeyThreshold = layers.Key.Chosen?.Threshold,
+    MemoryThreshold = layers.Memory.Chosen?.Threshold,
+    MemorySimilarityFloor = layers.Memory.Chosen?.SimilarityFloor,
+};
 ```
 
 A chosen threshold also holds only for the version of Gil that chose it. A threshold rests on how a layer scores its
 candidates and on what the replay asks, and a release may change either: 0.9.0 changed the key layer's scale, 0.10.0
-and 0.11.0 what the replay asks. When you store a threshold, store the Gil version with it and choose again when that
+and 0.11.0 what the replay asks, 0.16.0 the similar document layer's scale, and 0.17.0 added its similarity floor. When you store a threshold, store the Gil version with it and choose again when that
 version changes:
 
 ```csharp

@@ -6,7 +6,17 @@ namespace Gil.Forms;
 /// <param name="AnswerRate">The share of lookups answered at or above the threshold.</param>
 /// <param name="Answered">How many lookups were answered.</param>
 /// <param name="Lookups">How many lookups the replay made: every document with a settled value, except the first.</param>
-public sealed record ThresholdChoice(double Threshold, double Precision, double AnswerRate, int Answered, int Lookups);
+public sealed record ThresholdChoice(double Threshold, double Precision, double AnswerRate, int Answered, int Lookups)
+{
+    /// <summary>
+    /// For the similar document layer when more than one document votes, the similarity floor to set with the threshold
+    /// (<see cref="FieldDefinition.MemorySimilarityFloor"/>): of the answers at or above the threshold, the similarity of the
+    /// nearest document voting for the answer that only a hundredth of them fell below, counting the answers more than one
+    /// document voted on. Null for the key layer, for a field with a single voter, and when no answer had more than one
+    /// voter: a lone voter's score is its similarity, so the threshold already is its floor.
+    /// </summary>
+    public double? SimilarityFloor { get; init; }
+}
 
 /// <summary>
 /// What replaying settled documents found for one memory layer of a field: the threshold chosen, if any, and — whether or
@@ -117,7 +127,7 @@ public static class ThresholdSelection
         NotASet(form, field);
 
         var steps = await ReplayAsync(null, memory, form, field, documents, cancellationToken).ConfigureAwait(false);
-        return Similarity(steps.Where(s => s.Looked), targetPrecision, minimumAnswered);
+        return Similarity(steps.Where(s => s.Looked), form.Field(field), targetPrecision, minimumAnswered);
     }
 
     /// <summary>
@@ -165,7 +175,7 @@ public static class ThresholdSelection
             targetPrecision,
             minimumAnswered);
         var left = steps.Where(s => s.Looked && !(key.Chosen is { } chosen && s.Key is { } first && first.Score >= chosen.Threshold));
-        return new LayerThresholds(key, Similarity(left, targetPrecision, minimumAnswered));
+        return new LayerThresholds(key, Similarity(left, form.Field(field), targetPrecision, minimumAnswered));
     }
 
     /// <summary>
@@ -478,7 +488,7 @@ public static class ThresholdSelection
         new(form.Name, [.. form.Fields.Select(f => f.Name == field ? change(f) : f)], form.Language);
 
     /// <summary>One document of a replay: what the field memory and the document memory held before it said about it.</summary>
-    private readonly record struct Step(bool KeyLooked, (double Score, bool Matches)? Key, bool Looked, (double Similarity, bool Correct)? Match);
+    private readonly record struct Step(bool KeyLooked, (double Score, bool Matches)? Key, bool Looked, (double Score, bool Correct, double Nearest, bool Voted)? Match);
 
     /// <summary>
     /// One document of a typed replay: its settled value, the key layer's best value with none of it typed and with each
@@ -560,14 +570,14 @@ public static class ThresholdSelection
             var keyLooked = fieldMemory is not null && fieldMemory.Count(form.Name) > 0;
             var first = keyLooked ? fieldMemory!.First(form, field, before, settled, beforeSets) : null;
             var evidence = FormResolver.Evidence(form, field, document.Values, document.Sets);
-            (double, bool)? match = null;
+            (double, bool, double, bool)? match = null;
             if (remembered > 0)
             {
                 var asked = FormResolver.Evidence(form, field, before, beforeSets);
                 var (found, _) = await memory.NearestAsync(task, asked, definition.SimilarDocumentVotes, traceId, cancellationToken).ConfigureAwait(false);
                 // As a suggestion does: only documents whose value lies in the field's domain vote, scored as it scores them.
                 var admitted = found.Where(m => definition.Admits(m.Answer, before, beforeSets)).ToList();
-                match = SimilarVote.Decide(admitted, definition.SimilarDocumentVotes) is ({ } winner, var score) ? (score, winner.Answer == settled) : null;
+                match = SimilarVote.Decide(admitted, definition.SimilarDocumentVotes) is ({ } winner, var score) ? (score, winner.Answer == settled, winner.Similarity, SimilarVote.Voters(admitted, definition.SimilarDocumentVotes) > 1) : null;
             }
 
             steps.Add(new Step(keyLooked, first, remembered > 0, match));
@@ -653,11 +663,43 @@ public static class ThresholdSelection
         return -1;
     }
 
-    /// <summary>The similarity choice over the given lookups: every one counts, answered or not.</summary>
-    private static ThresholdReplay Similarity(IEnumerable<Step> looked, double targetPrecision, int minimumAnswered)
+    /// <summary>
+    /// The similarity choice over the given lookups: every one counts, answered or not. With more than one voter each
+    /// threshold carries the similarity floor of the answers it rests on (<see cref="ThresholdChoice.SimilarityFloor"/>).
+    /// </summary>
+    private static ThresholdReplay Similarity(IEnumerable<Step> looked, FieldDefinition definition, double targetPrecision, int minimumAnswered)
     {
         var steps = looked.ToList();
-        return Fit([.. steps.Where(s => s.Match is not null).Select(s => s.Match!.Value)], steps.Count, targetPrecision, minimumAnswered);
+        var matches = steps.Where(s => s.Match is not null).Select(s => s.Match!.Value).ToList();
+        var replay = Fit([.. matches.Select(m => (m.Score, m.Correct))], steps.Count, targetPrecision, minimumAnswered);
+        if (definition.SimilarDocumentVotes == 1)
+        {
+            return replay;
+        }
+
+        // Only answers decided by a vote say how alike its voters were; a lone voter's score is its similarity already.
+        var voted = matches.Where(m => m.Voted).Select(m => (m.Score, m.Nearest)).ToList();
+        ThresholdChoice? Floored(ThresholdChoice? choice) => choice is null
+            ? null
+            : choice with { SimilarityFloor = SimilarityFloor(voted, choice.Threshold) };
+        return replay with { Chosen = Floored(replay.Chosen), MostPrecise = Floored(replay.MostPrecise) };
+    }
+
+    /// <summary>
+    /// The share of a threshold's answers whose nearest voter may fall below its similarity floor. In replays where drafts
+    /// were reworded away from the settled documents' words, the lowest similarity alone was pulled down by a single odd
+    /// answer and let reworded drafts through; a hundredth kept them below the floor, and a twentieth began to cost answers.
+    /// </summary>
+    private const double FloorShare = 0.01;
+
+    /// <summary>
+    /// Of the answers decided by a vote at or above <paramref name="threshold"/>, the nearest voter's similarity that only
+    /// <see cref="FloorShare"/> of them fall below; null when there are none.
+    /// </summary>
+    internal static double? SimilarityFloor(IEnumerable<(double Score, double Nearest)> answers, double threshold)
+    {
+        var nearest = answers.Where(a => a.Score >= threshold).Select(a => a.Nearest).Order().ToList();
+        return nearest.Count == 0 ? null : nearest[(int)(FloorShare * (nearest.Count - 1))];
     }
 
     /// <summary>The similar document layer does not suggest a field that takes several values, so it has no threshold to choose.</summary>

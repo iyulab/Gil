@@ -120,7 +120,12 @@ internal static class ReadmeExample
         await reopened.SettleAsync("team", Settlement.Restore(saved[0].Values["team"]));
 
         var layers = await ThresholdSelection.SelectLayersAsync(new FieldMemory(), new LexicalMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30);
-        var team = form.Field("team") with { KeyThreshold = layers.Key.Chosen?.Threshold, MemoryThreshold = layers.Memory.Chosen?.Threshold };
+        var team = form.Field("team") with
+        {
+            KeyThreshold = layers.Key.Chosen?.Threshold,
+            MemoryThreshold = layers.Memory.Chosen?.Threshold,
+            MemorySimilarityFloor = layers.Memory.Chosen?.SimilarityFloor,
+        };
 
         var gilVersion = typeof(FormResolver).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;

@@ -362,7 +362,10 @@ public sealed class FormResolver
                 return ([], neighbours, new Recall(others[0].Source, others[0].Similarity, threshold, false), energy);
             }
 
-            var hit = typed is null && score >= threshold; // typed text: only the key layer answers
+            // Typed text: only the key layer answers. The floor keeps a vote among documents less like the draft than those the
+            // threshold was measured on from being trusted on their agreement alone; a lone voter's score is its similarity.
+            var floored = field.MemorySimilarityFloor is { } floor && SimilarVote.Voters(admitted, field.SimilarDocumentVotes) > 1 && match.Similarity < floor;
+            var hit = typed is null && score >= threshold && !floored;
             var recall = new Recall(match.Source, score, threshold, hit);
             return ([new FieldCandidate(match.Answer, score, FieldSource.SimilarDocument, match.Source, hit)], neighbours, recall, energy);
         }

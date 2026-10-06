@@ -15,6 +15,9 @@ internal static class SimilarVote
     /// </summary>
     /// <param name="nearest">Documents whose value lies in the field's domain, most similar first.</param>
     /// <param name="votes">How many of them vote; at least 1.</param>
+    /// <summary>How many of <paramref name="nearest"/> vote when <paramref name="votes"/> may: the fewer of the two.</summary>
+    public static int Voters(IReadOnlyList<MemoryMatch> nearest, int votes) => Math.Min(nearest.Count, votes);
+
     public static (MemoryMatch Match, double Score)? Decide(IReadOnlyList<MemoryMatch> nearest, int votes)
     {
         if (nearest.Count == 0)

@@ -3,6 +3,22 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## 0.17.0
+
+### Fixed
+
+- **A vote among documents unlike the draft is no longer trusted on their agreement alone.** The similar document
+  layer's score is how far its voters agree, and a draft written in words no settled document uses still has nearest
+  documents — sharing only an opening phrase or another field — that can agree. A threshold chosen on drafts written
+  the usual way promised nothing for such drafts, yet trusted them; where the replay was right every time, it trusted
+  half of them, wrongly. Choosing a memory threshold now also chooses a similarity floor
+  (`ThresholdChoice.SimilarityFloor`): of the answers at or above the threshold, the similarity of the nearest voter for
+  the answer that only a hundredth of them fell below. **Set it as `FieldDefinition.MemorySimilarityFloor` with
+  `MemoryThreshold`**; below it the voted value is offered as a guess. Thresholds themselves are unchanged. Replaying
+  public streams, the floor cost under one percent of the answers to drafts written the usual way and answered no more
+  drafts stripped of their free text wrongly. A field with `SimilarDocumentVotes = 1`, and a lookup with a single voter,
+  have no floor: the score is then the similarity.
+
 ## 0.16.0
 
 ### Breaking
