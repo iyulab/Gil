@@ -21,6 +21,11 @@ with what to do.
   the similar document lookup and the model call for that field only. An application that shows one field at a time
   no longer pays for the rest. A field that is not judged, is off, or already has a value is refused.
 
+### Dependencies
+
+- `IronHive.Providers.OpenAI.Compatible` 0.50.0 → 0.55.1 (`Gil.IronHive`). Nothing `Gil.IronHive` uses changed shape;
+  a template switch given in `ExtraBody` is still sent as given, and no thinking budget is added to Gil's requests.
+
 ## 0.17.0
 
 ### Added
