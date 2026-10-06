@@ -179,6 +179,59 @@ public static class ThresholdSelection
     }
 
     /// <summary>
+    /// Chooses the thresholds of a field's coarse level (<see cref="FieldDefinition.Coarse"/>) in the order a suggestion
+    /// offers it: on the lookups the field's value layers leave unanswered at the thresholds it has
+    /// (<see cref="FieldDefinition.KeyThreshold"/>, <see cref="FieldDefinition.MemoryThreshold"/> with its floor — choose
+    /// those first), the prefix the keys back, as <see cref="SelectKeyThreshold"/> chooses for a value; on the lookups that
+    /// leaves, the prefix the similar documents vote for, as <see cref="SelectAsync"/> does, with its similarity floor. A
+    /// prefix is right when the settled value begins with it. Each document is asked about in memories holding only the
+    /// documents settled before it, then put into both, as for the value.
+    /// </summary>
+    /// <param name="fieldMemory">An empty field memory configured as the one in use; the replay fills it. Never the one serving suggestions.</param>
+    /// <param name="memory">An empty memory of the kind in use; the replay fills it. Never the one serving suggestions.</param>
+    /// <param name="form">The form, with the field's value thresholds set.</param>
+    /// <param name="field">A judged field of the form with a coarse level.</param>
+    /// <param name="documents">Settled documents, in any order.</param>
+    /// <param name="targetPrecision">The share of prefixes offered that must be right, in (0, 1], for each layer.</param>
+    /// <param name="minimumAnswered">The fewest answers a precision may rest on, for each layer; the application's call.</param>
+    /// <param name="cancellationToken">Cancels the replay.</param>
+    /// <returns>
+    /// For <see cref="CoarseLevel.KeyThreshold"/>, and for <see cref="CoarseLevel.MemoryThreshold"/> with
+    /// <see cref="ThresholdChoice.SimilarityFloor"/> for <see cref="CoarseLevel.MemorySimilarityFloor"/>. Their
+    /// <see cref="ThresholdReplay.Lookups"/> count only the lookups left to each.
+    /// </returns>
+    public static async Task<LayerThresholds> SelectCoarseAsync(
+        FieldMemory fieldMemory,
+        IMemory memory,
+        FormDefinition form,
+        string field,
+        IEnumerable<SettledDocument> documents,
+        double targetPrecision,
+        int minimumAnswered,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fieldMemory);
+        ArgumentNullException.ThrowIfNull(memory);
+        ArgumentNullException.ThrowIfNull(form);
+        ArgumentNullException.ThrowIfNull(documents);
+        Check(form, field, targetPrecision, minimumAnswered);
+        if (form.Field(field).Coarse is null)
+        {
+            throw new ArgumentException($"'{field}' has no coarse level to choose thresholds for.", nameof(field));
+        }
+
+        var steps = await ReplayAsync(fieldMemory, memory, form, field, documents, cancellationToken, coarse: true).ConfigureAwait(false);
+        var left = steps.Where(s => (s.KeyLooked || s.Looked) && !s.Coarse!.ValueAnswered).ToList();
+        var key = Fit([.. left.Where(s => s.Coarse!.Keys is not null).Select(s => s.Coarse!.Keys!.Value)], left.Count, targetPrecision, minimumAnswered);
+        var rest = left.Where(s => !(key.Chosen is { } chosen && s.Coarse!.Keys is { } k && k.Score >= chosen.Threshold)).ToList();
+        var votes = rest.Where(s => s.Coarse!.Vote is not null).Select(s => s.Coarse!.Vote!.Value).ToList();
+        var vote = Fit([.. votes.Select(v => (v.Score, v.Correct))], rest.Count, targetPrecision, minimumAnswered);
+        var voted = votes.Where(v => v.Voted).Select(v => (v.Score, v.Nearest)).ToList();
+        ThresholdChoice? Floored(ThresholdChoice? choice) => choice is null ? null : choice with { SimilarityFloor = SimilarityFloor(voted, choice.Threshold) };
+        return new LayerThresholds(key, vote with { Chosen = Floored(vote.Chosen), MostPrecise = Floored(vote.MostPrecise) });
+    }
+
+    /// <summary>
     /// Chooses <see cref="FieldDefinition.KeyThreshold"/> the same way: replays the documents in the order they were
     /// settled, asking a field memory holding only the documents settled before each for the best-ranked value under the
     /// keys of the values that had arrived before the field (<see cref="SettledDocument.Arrival"/>), then putting the
@@ -488,7 +541,13 @@ public static class ThresholdSelection
         new(form.Name, [.. form.Fields.Select(f => f.Name == field ? change(f) : f)], form.Language);
 
     /// <summary>One document of a replay: what the field memory and the document memory held before it said about it.</summary>
-    private readonly record struct Step(bool KeyLooked, (double Score, bool Matches)? Key, bool Looked, (double Score, bool Correct, double Nearest, bool Voted)? Match);
+    private readonly record struct Step(bool KeyLooked, (double Score, bool Matches)? Key, bool Looked, (double Score, bool Correct, double Nearest, bool Voted)? Match)
+    {
+        /// <summary>For a coarse replay: the level as the keys and the vote back it, and whether the field's value layers answered.</summary>
+        public CoarseStep? Coarse { get; init; }
+    }
+
+    private sealed record CoarseStep(bool ValueAnswered, (double Score, bool Correct)? Keys, (double Score, bool Correct, double Nearest, bool Voted)? Vote);
 
     /// <summary>
     /// One document of a typed replay: its settled value, the key layer's best value with none of it typed and with each
@@ -537,7 +596,8 @@ public static class ThresholdSelection
         FormDefinition form,
         string field,
         IEnumerable<SettledDocument> documents,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool coarse = false)
     {
         var task = FormResolver.TaskName(form, field);
         var definition = form.Field(field);
@@ -571,16 +631,35 @@ public static class ThresholdSelection
             var first = keyLooked ? fieldMemory!.First(form, field, before, settled, beforeSets) : null;
             var evidence = FormResolver.Evidence(form, field, document.Values, document.Sets);
             (double, bool, double, bool)? match = null;
+            IReadOnlyList<MemoryMatch> admitted = [];
             if (remembered > 0)
             {
                 var asked = FormResolver.Evidence(form, field, before, beforeSets);
                 var (found, _) = await memory.NearestAsync(task, asked, definition.SimilarDocumentVotes, traceId, cancellationToken).ConfigureAwait(false);
                 // As a suggestion does: only documents whose value lies in the field's domain vote, scored as it scores them.
-                var admitted = found.Where(m => definition.Admits(m.Answer, before, beforeSets)).ToList();
+                admitted = [.. found.Where(m => definition.Admits(m.Answer, before, beforeSets))];
                 match = SimilarVote.Decide(admitted, definition.SimilarDocumentVotes) is ({ } winner, var score) ? (score, winner.Answer == settled, winner.Similarity, SimilarVote.Voters(admitted, definition.SimilarDocumentVotes) > 1) : null;
             }
 
-            steps.Add(new Step(keyLooked, first, remembered > 0, match));
+            var step = new Step(keyLooked, first, remembered > 0, match);
+            if (coarse && definition.Coarse is { } level)
+            {
+                // As a suggestion: the value layers answer at the field's own thresholds; only where they do not is the level offered.
+                var valueAnswered = first is { } f && f.Score >= definition.KeyThreshold
+                    || match is { } m && m.Item1 >= definition.MemoryThreshold && !(m.Item4 && definition.MemorySimilarityFloor is { } floor && m.Item3 < floor);
+                var cls = level.Of(settled);
+                var keys = keyLooked ? CoarseGroups.Keys(fieldMemory!.KeyedValues(form, field, before, knownSets: beforeSets), level) : null;
+                var vote = CoarseGroups.Vote(admitted, definition.SimilarDocumentVotes, level);
+                step = step with
+                {
+                    Coarse = new CoarseStep(
+                        valueAnswered,
+                        keys is { } k ? (k.Score, k.Prefix == cls) : null,
+                        vote is { } v ? (v.Score, v.Prefix == cls, v.Nearest.Similarity, v.Voted) : null),
+                };
+            }
+
+            steps.Add(step);
             fieldMemory?.Put(form, document);
             var key = FormResolver.CaseKey(evidence);
             if (cases.TryGetValue(key, out var earlier))

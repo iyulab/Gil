@@ -102,6 +102,47 @@ public sealed class CoarseLevelTests
     }
 
     [Fact]
+    public async Task A_replay_chooses_the_level_s_thresholds_on_the_scores_suggestions_carry()
+    {
+        // Each document asked about with the ones before it remembered, as the replay asks: the threshold it chooses for
+        // the keys' prefix is a score some such suggestion carried for the level.
+        var form = Report(new CoarseLevel(2));
+        var keyScores = new List<double>();
+        for (var i = 1; i < History.Length; i++)
+        {
+            var resolver = new FormResolver(new FieldMemory(), new LexicalMemory());
+            await resolver.RebuildAsync(form, History.Take(i), Ct);
+            var asked = History[i].Values.Where(v => v.Key != "code").ToDictionary(v => v.Key, v => v.Value);
+            if ((await resolver.SuggestAsync(form, History[i].DocumentId, asked, Ct)).Single().Coarse is { Source: FieldSource.SettledFieldMemory } keys)
+            {
+                keyScores.Add(keys.Score);
+            }
+        }
+
+        var layers = await ThresholdSelection.SelectCoarseAsync(new FieldMemory(), new LexicalMemory(), form, "code", History, 0.01, minimumAnswered: 1, Ct);
+
+        layers.Key.Chosen.Should().NotBeNull();
+        keyScores.Should().Contain(layers.Key.Chosen!.Threshold);
+        layers.Key.Candidates.Should().Be(keyScores.Count);
+    }
+
+    [Fact]
+    public async Task A_replay_leaves_the_lookups_the_value_layers_answered_out()
+    {
+        // A key threshold of 0 answers every lookup the keys reach; only the first, before any key, is left.
+        var answering = Report(new CoarseLevel(2), keyThreshold: 0);
+        var open = Report(new CoarseLevel(2));
+
+        var none = await ThresholdSelection.SelectCoarseAsync(new FieldMemory(), new LexicalMemory(), answering, "code", History, 0.5, 1, Ct);
+        var all = await ThresholdSelection.SelectCoarseAsync(new FieldMemory(), new LexicalMemory(), open, "code", History, 0.5, 1, Ct);
+
+        none.Key.Lookups.Should().BeLessThan(all.Key.Lookups);
+        all.Key.Lookups.Should().Be(History.Length - 1);
+        await FluentActions.Awaiting(() => ThresholdSelection.SelectCoarseAsync(new FieldMemory(), new LexicalMemory(), Report(coarse: null), "code", History, 0.5, 1, Ct))
+            .Should().ThrowAsync<ArgumentException>().WithMessage("*coarse level*");
+    }
+
+    [Fact]
     public void A_class_is_the_value_s_prefix_and_needs_one_character_and_a_single_valued_judged_field()
     {
         new CoarseLevel(2).Of("2710").Should().Be("27");
