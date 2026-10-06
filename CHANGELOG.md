@@ -3,6 +3,24 @@
 Versions follow `0.x`: a minor release may change the public API. Each such change is listed under **Breaking**
 with what to do.
 
+## 0.18.0
+
+### Breaking
+
+- **A suggestion while typing is asked for the field typed into alone.** `FormResolver.SuggestAsync(form, documentId,
+  values, sets, typed)` and `FormSession.SuggestAsync(typed)` suggested every open field at each pause; typing changes
+  no other field's suggestion, and where fields look up similar documents each pause repeated every lookup — a form
+  with five such fields and 100,000 saved documents took about 0.2 s a pause. Call
+  `FormResolver.SuggestAsync(form, documentId, field, values, typed: text)` or `FormSession.SuggestAsync(field, text)`
+  instead; both return the one field's `FieldSuggestion`, and keep the other fields' suggestions as last shown.
+
+### Added
+
+- **One field's suggestion on its own.** `FormResolver.SuggestAsync(form, documentId, field, values, sets, typed)` and
+  `FormSession.SuggestAsync(field, typed)` suggest one open judged field as the whole form's suggestion would, making
+  the similar document lookup and the model call for that field only. An application that shows one field at a time
+  no longer pays for the rest. A field that is not judged, is off, or already has a value is refused.
+
 ## 0.17.0
 
 ### Added

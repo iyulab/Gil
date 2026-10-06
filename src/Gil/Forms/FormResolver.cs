@@ -182,56 +182,58 @@ public sealed class FormResolver
     }
 
     /// <summary>
-    /// As <see cref="SuggestAsync(FormDefinition, string, IReadOnlyDictionary{string, string}, IReadOnlyDictionary{string, IReadOnlyList{string}}, CancellationToken)"/>,
-    /// while a person types into judged fields: <paramref name="typed"/> holds, for each such field, the text typed so far.
-    /// Such a field is open — it has no value yet — and its suggestion offers only values that begin with the typed text
-    /// (ignoring case). Only the key layer answers then, held to <see cref="FieldDefinition.KeyThresholdFor"/> that many
-    /// characters; a similar document's value that fits is offered as a guess, and no model is asked — a person who is
-    /// typing asks again with every pause.
+    /// Suggests one judged field from the values given, as
+    /// <see cref="SuggestAsync(FormDefinition, string, IReadOnlyDictionary{string, string}, IReadOnlyDictionary{string, IReadOnlyList{string}}, CancellationToken)"/>
+    /// would among the rest, without suggesting the rest: the similar document lookup and the model call are made for this
+    /// field alone. For an application that shows one field's suggestion at a time, and while a person types into a field —
+    /// typing changes no other field's suggestion, and a form whose fields each look up similar documents would repeat
+    /// every lookup at each pause. <paramref name="typed"/> is the text typed into the field so far: its suggestion then
+    /// offers only values that begin with it (ignoring case), only the key layer answers, held to
+    /// <see cref="FieldDefinition.KeyThresholdFor"/> that many characters, a similar document's value that fits is offered
+    /// as a guess, and no model is asked — a person who is typing asks again with every pause.
     /// </summary>
+    /// <param name="form">The form.</param>
+    /// <param name="documentId">The document asked about; opaque, as in <see cref="Open"/>.</param>
+    /// <param name="field">An open judged field: not <see cref="FieldPolicy.Off"/>, and without a value unless it takes several.</param>
+    /// <param name="values">The document's values as they stand — observed and judged alike.</param>
+    /// <param name="sets">The values chosen so far of fields that take several; null when there are none.</param>
+    /// <param name="typed">The text typed into <paramref name="field"/> so far; null or empty before typing.</param>
+    /// <param name="cancellationToken">Cancels the calls made.</param>
     /// <exception cref="ArgumentException">
-    /// A field is given where its kind does not belong, or text is typed into a field that is not judged or already has a value.
+    /// The field is not an open judged field, or a field is given where its kind does not belong (<see cref="SettledDocument.Validate"/>).
     /// </exception>
-    public async Task<IReadOnlyList<FieldSuggestion>> SuggestAsync(
+    public Task<FieldSuggestion> SuggestAsync(
         FormDefinition form,
         string documentId,
+        string field,
         IReadOnlyDictionary<string, string> values,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> sets,
-        IReadOnlyDictionary<string, string> typed,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? sets = null,
+        string? typed = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(form);
         ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        ArgumentNullException.ThrowIfNull(field);
         ArgumentNullException.ThrowIfNull(values);
-        ArgumentNullException.ThrowIfNull(sets);
-        ArgumentNullException.ThrowIfNull(typed);
+        sets ??= NoSets;
         new SettledDocument(documentId, values, default) { Sets = sets }.Validate(form);
-        Typed(form, typed, values.ContainsKey);
-        var suggestions = new List<FieldSuggestion>();
-        foreach (var field in form.Fields.Where(f => f.Role == FieldRole.Judged && f.Policy != FieldPolicy.Off && (f.Multiple || !values.ContainsKey(f.Name))))
+        var definition = form.Field(field);
+        if (definition.Role != FieldRole.Judged)
         {
-            suggestions.Add(await SuggestFieldAsync(form, documentId, values, field, cancellationToken, sets: sets, typed: typed.GetValueOrDefault(field.Name)).ConfigureAwait(false));
+            throw new ArgumentException($"'{field}' is not a judged field.", nameof(field));
         }
 
-        return suggestions;
-    }
-
-    /// <summary>Checks that text is typed only into judged fields without a value.</summary>
-    internal static void Typed(FormDefinition form, IReadOnlyDictionary<string, string> typed, Func<string, bool> hasValue)
-    {
-        foreach (var (name, text) in typed)
+        if (definition.Policy == FieldPolicy.Off)
         {
-            ArgumentNullException.ThrowIfNull(text, nameof(typed));
-            if (form.Field(name).Role != FieldRole.Judged)
-            {
-                throw new ArgumentException($"Text is typed into '{name}', which is not a judged field.", nameof(typed));
-            }
-
-            if (hasValue(name))
-            {
-                throw new ArgumentException($"Text is typed into '{name}', which already has a value.", nameof(typed));
-            }
+            throw new ArgumentException($"'{field}' is off (FieldPolicy.Off) and is not suggested.", nameof(field));
         }
+
+        if (!definition.Multiple && values.ContainsKey(field))
+        {
+            throw new ArgumentException($"'{field}' already has a value.", nameof(field));
+        }
+
+        return SuggestFieldAsync(form, documentId, values, definition, cancellationToken, sets: sets, typed: typed);
     }
 
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> NoSets =

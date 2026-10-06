@@ -43,9 +43,6 @@ public sealed class TypedSuggestionTests
     ];
 
     private static readonly Dictionary<string, string> Phone = new() { ["channel"] = "phone", ["summary"] = "new ticket" };
-    private static readonly Dictionary<string, IReadOnlyList<string>> NoSets = [];
-
-    private static Dictionary<string, string> Typing(string text) => new() { ["team"] = text };
 
     [Fact]
     public void A_typed_threshold_follows_the_key_threshold_by_characters_typed()
@@ -76,7 +73,7 @@ public sealed class TypedSuggestionTests
         await resolver.RebuildAsync(form, History, Ct);
 
         var untyped = (await resolver.SuggestAsync(form, "d9", Phone, Ct)).Single();
-        var typed = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("B"), Ct)).Single();
+        var typed = await resolver.SuggestAsync(form, "d9", "team", Phone, typed: "B", cancellationToken: Ct);
 
         untyped.Candidates[0].Value.Should().Be("network");
         untyped.Answered.Should().BeFalse(); // network scores 3/7 under channel=phone, below 0.9
@@ -96,7 +93,7 @@ public sealed class TypedSuggestionTests
 
         foreach (var text in new[] { "b", "bi", "BIL", "billing" })
         {
-            var suggestion = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing(text), Ct)).Single();
+            var suggestion = await resolver.SuggestAsync(form, "d9", "team", Phone, typed: text, cancellationToken: Ct);
             suggestion.Candidates[0].Value.Should().Be("billing");
             suggestion.Answered.Should().BeTrue(because: $"\"{text}\" still leads to the value trusted at \"b\"");
         }
@@ -111,7 +108,7 @@ public sealed class TypedSuggestionTests
         var resolver = new FormResolver(new FieldMemory());
         await resolver.RebuildAsync(form, History, Ct);
 
-        var suggestion = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("ba"), Ct)).Single();
+        var suggestion = await resolver.SuggestAsync(form, "d9", "team", Phone, typed: "ba", cancellationToken: Ct);
 
         suggestion.Candidates.Select(c => c.Value).Should().Equal("backend");
         suggestion.Answered.Should().BeFalse();
@@ -125,8 +122,8 @@ public sealed class TypedSuggestionTests
         await resolver.RebuildAsync(form, History, Ct);
 
         var untyped = (await resolver.SuggestAsync(form, "d9", Phone, Ct)).Single();
-        var typing = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("netw"), Ct)).Single();
-        var elsewhere = (await resolver.SuggestAsync(form, "d9", Phone, NoSets, Typing("b"), Ct)).Single();
+        var typing = await resolver.SuggestAsync(form, "d9", "team", Phone, typed: "netw", cancellationToken: Ct);
+        var elsewhere = await resolver.SuggestAsync(form, "d9", "team", Phone, typed: "b", cancellationToken: Ct);
 
         untyped.Answered.Should().BeTrue();
         typing.Candidates[0].Value.Should().Be("network");
@@ -144,8 +141,8 @@ public sealed class TypedSuggestionTests
         var asked = new Dictionary<string, string> { ["channel"] = "email", ["summary"] = "card payment failed twice again" };
 
         var untyped = (await resolver.SuggestAsync(form, "d9", asked, Ct)).Single();
-        var typed = (await resolver.SuggestAsync(form, "d9", asked, NoSets, Typing("bil"), Ct)).Single();
-        var mismatched = (await resolver.SuggestAsync(form, "d9", asked, NoSets, Typing("n"), Ct)).Single();
+        var typed = await resolver.SuggestAsync(form, "d9", "team", asked, typed: "bil", cancellationToken: Ct);
+        var mismatched = await resolver.SuggestAsync(form, "d9", "team", asked, typed: "n", cancellationToken: Ct);
 
         untyped.Candidates.Should().Contain(c => c.Source == FieldSource.SimilarDocument && c.Trusted);
         typed.Candidates[0].Value.Should().Be("billing");
@@ -163,11 +160,11 @@ public sealed class TypedSuggestionTests
         var resolver = new FormResolver(new FieldMemory());
         var withValue = new Dictionary<string, string>(Phone) { ["team"] = "network" };
 
-        var observed = () => resolver.SuggestAsync(form, "d9", Phone, NoSets, new Dictionary<string, string> { ["channel"] = "ph" }, Ct);
-        var settled = () => resolver.SuggestAsync(form, "d9", withValue, NoSets, Typing("n"), Ct);
+        var observed = () => resolver.SuggestAsync(form, "d9", "channel", Phone, typed: "ph", cancellationToken: Ct);
+        var settled = () => resolver.SuggestAsync(form, "d9", "team", withValue, typed: "n", cancellationToken: Ct);
 
-        await observed.Should().ThrowAsync<ArgumentException>().WithMessage("*'channel', which is not a judged field*");
-        await settled.Should().ThrowAsync<ArgumentException>().WithMessage("*'team', which already has a value*");
+        await observed.Should().ThrowAsync<ArgumentException>().WithMessage("*\'channel\' is not a judged field*");
+        await settled.Should().ThrowAsync<ArgumentException>().WithMessage("*\'team\' already has a value*");
     }
 
     [Fact]
@@ -179,7 +176,7 @@ public sealed class TypedSuggestionTests
         var session = resolver.Open(form, "d9");
         await session.ObserveAsync("channel", "phone", Ct);
 
-        var typed = (await session.SuggestAsync(Typing("b"), Ct)).Single();
+        var typed = await session.SuggestAsync("team", "b", Ct);
         var after = (await session.SuggestAsync(Ct)).Single();
 
         typed.Candidates[0].Value.Should().Be("billing");

@@ -371,6 +371,7 @@ own evidence:
 
 ```csharp
 var onScreen = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen);
+var teamOnly = await forms.SuggestAsync(form, "tickets/0412", "team", valuesOnScreen); // one field, when only it is shown
 // … on save:
 await forms.RebuildAsync(form, [savedDocument]);
 ```
@@ -488,8 +489,11 @@ same precision (0.86); the same values shuffled between documents answered no mo
 value the other form has settled is evidence: one still open there may change.
 
 When a person starts typing into a judged field, ask again with what has been typed rather than dropping the
-suggestion. `SuggestAsync` takes, for each field being typed into, the text typed so far; the field stays open, and its
-suggestion offers only values that begin with the text (ignoring case; Korean by keystrokes, so a syllable still
+suggestion. Ask for that field alone, with the text typed so far — `SuggestAsync` with the field's name, or a session's
+`SuggestAsync(field, typed)`: typing changes no other field's suggestion, and where each field looks up similar
+documents, asking for the whole form again at every pause repeats every lookup (a form with five such fields and a
+hundred thousand saved documents took about 0.2 s a pause; the field alone takes one lookup). The field stays open, and
+its suggestion offers only values that begin with the text (ignoring case; Korean by keystrokes, so a syllable still
 being composed — "바" on the way to "박" — begins the values it leads to). Only the key layer answers then, held to a
 threshold for that many characters typed, `TypedKeyThresholds`; a value trusted with fewer characters typed, or
 before typing, stays trusted while the text still leads to it, so typing on never withdraws it. A person types only
@@ -504,7 +508,7 @@ typing as well and brings the typed thresholds for it (`Typed`):
 
 ```csharp
 var typedTeam = form.Field("team") with { TypedKeyThresholds = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30).Thresholds };
-var whileTyping = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen, new Dictionary<string, IReadOnlyList<string>>(), new Dictionary<string, string> { ["team"] = "ne" });
+var whileTyping = await forms.SuggestAsync(form, "tickets/0412", "team", valuesOnScreen, typed: "ne");
 ```
 
 Replaying a public stream of settled documents with thresholds chosen this way on its first half, the first typed

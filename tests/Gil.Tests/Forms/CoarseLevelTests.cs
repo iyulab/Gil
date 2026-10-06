@@ -41,7 +41,7 @@ public sealed class CoarseLevelTests
         await resolver.RebuildAsync(form, History, Ct);
         return typed is null
             ? (await resolver.SuggestAsync(form, "d9", asked ?? Asked, Ct)).Single()
-            : (await resolver.SuggestAsync(form, "d9", asked ?? Asked, new Dictionary<string, IReadOnlyList<string>>(), new Dictionary<string, string> { ["code"] = typed }, Ct)).Single();
+            : await resolver.SuggestAsync(form, "d9", "code", asked ?? Asked, typed: typed, cancellationToken: Ct);
     }
 
     [Fact]

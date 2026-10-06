@@ -60,9 +60,8 @@ public sealed class HangulTests
         var resolver = new FormResolver(new FieldMemory());
         await resolver.RebuildAsync(form, history, TestContext.Current.CancellationToken);
 
-        var composing = (await resolver.SuggestAsync(
-            form, "d9", new Dictionary<string, string> { ["team"] = "가" }, new Dictionary<string, IReadOnlyList<string>>(),
-            new Dictionary<string, string> { ["owner"] = "바" }, TestContext.Current.CancellationToken)).Single();
+        var composing = await resolver.SuggestAsync(
+            form, "d9", "owner", new Dictionary<string, string> { ["team"] = "가" }, typed: "바", cancellationToken: TestContext.Current.CancellationToken);
 
         composing.Candidates.Select(c => c.Value).Should().Equal("박물관");
         composing.Answered.Should().BeTrue();

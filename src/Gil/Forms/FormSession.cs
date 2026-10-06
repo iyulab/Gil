@@ -112,23 +112,23 @@ public sealed class FormSession
     }
 
     /// <summary>
-    /// Suggestions for every open judged field while a person types into some: <paramref name="typed"/> holds, for each such
-    /// field, the text typed so far — it stays open, as typing is not settling — and its suggestion offers only values that
-    /// begin with it (ignoring case), the key layer held to <see cref="FieldDefinition.KeyThresholdFor"/> that many
-    /// characters, as <see cref="FormResolver.SuggestAsync(FormDefinition, string, IReadOnlyDictionary{string, string}, IReadOnlyDictionary{string, IReadOnlyList{string}}, IReadOnlyDictionary{string, string}, CancellationToken)"/> describes.
+    /// The suggestion for one open judged field alone — the field shown, or the one a person types into, without the work
+    /// of suggesting the rest. <paramref name="typed"/> is the text typed into it so far: the field stays open, as typing is
+    /// not settling, and its suggestion offers only values that begin with the text (ignoring case), the key layer held to
+    /// <see cref="FieldDefinition.KeyThresholdFor"/> that many characters, as
+    /// <see cref="FormResolver.SuggestAsync(FormDefinition, string, string, IReadOnlyDictionary{string, string}, IReadOnlyDictionary{string, IReadOnlyList{string}}?, string?, CancellationToken)"/> describes.
     /// </summary>
-    /// <exception cref="ArgumentException">Text is typed into a field that is not judged or already has a value.</exception>
-    public async Task<IReadOnlyList<FieldSuggestion>> SuggestAsync(IReadOnlyDictionary<string, string> typed, CancellationToken cancellationToken = default)
+    /// <exception cref="ArgumentException">The field is not open: not a judged field, off, settled or rejected.</exception>
+    public Task<FieldSuggestion> SuggestAsync(string field, string? typed = null, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(typed);
-        FormResolver.Typed(Form, typed, f => !Form.Field(f).Multiple && _values.ContainsKey(f));
-        var suggestions = new List<FieldSuggestion>();
-        foreach (var field in Form.Fields.Where(IsOpen))
+        ArgumentNullException.ThrowIfNull(field);
+        var definition = Form.Field(field);
+        if (!IsOpen(definition))
         {
-            suggestions.Add(await _resolver.SuggestFieldAsync(Form, DocumentId, _values, field, cancellationToken, _arrival, _sets, typed.GetValueOrDefault(field.Name)).ConfigureAwait(false));
+            throw new ArgumentException($"'{field}' is not open: only a judged field that is not off, settled or rejected is suggested.", nameof(field));
         }
 
-        return suggestions;
+        return _resolver.SuggestFieldAsync(Form, DocumentId, _values, definition, cancellationToken, _arrival, _sets, typed);
     }
 
     /// <summary>

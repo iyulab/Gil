@@ -113,6 +113,7 @@ internal static class ReadmeExample
         Dictionary<string, string> valuesOnScreen = new() { ["summary"] = "VPN drops every ten minutes" };
         var savedDocument = document;
         var onScreen = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen);
+        var teamOnly = await forms.SuggestAsync(form, "tickets/0412", "team", valuesOnScreen); // one field, when only it is shown
         // … on save:
         await forms.RebuildAsync(form, [savedDocument]);
 
@@ -134,7 +135,7 @@ internal static class ReadmeExample
         var resting = form.Field("team") with { DependsOn = narrowed.DependsOn };
 
         var typedTeam = form.Field("team") with { TypedKeyThresholds = ThresholdSelection.SelectTypedKeyThresholds(new FieldMemory(), form, "team", saved, targetPrecision: 0.9, minimumAnswered: 30).Thresholds };
-        var whileTyping = await forms.SuggestAsync(form, "tickets/0412", valuesOnScreen, new Dictionary<string, IReadOnlyList<string>>(), new Dictionary<string, string> { ["team"] = "ne" });
+        var whileTyping = await forms.SuggestAsync(form, "tickets/0412", "team", valuesOnScreen, typed: "ne");
 
         await SetValuedFieldAsync(forms);
     }
